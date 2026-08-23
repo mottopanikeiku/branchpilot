@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from statistics import mean
@@ -35,12 +36,13 @@ def _measure(
     name: str,
     family: str,
     scoring_cost: float,
+    max_samples: int | None = None,
 ) -> Metrics:
     correct: list[float] = []
     counts: list[int] = []
     tokens: list[int] = []
     for rollout in rollouts:
-        horizon = len(rollout.samples)
+        horizon = min(len(rollout.samples), max_samples or len(rollout.samples))
         count = max(1, min(horizon, int(rule(rollout))))
         answer = prefix_state(rollout, count, horizon).majority_answer
         correct.append(float(answer == rollout.gold))
@@ -104,9 +106,12 @@ def benchmark(
 ) -> list[Metrics]:
     if not rollouts:
         raise ValueError("benchmark requires at least one rollout")
+    costs = tuple(costs)
+    if not costs or any(not math.isfinite(cost) or cost < 0 for cost in costs):
+        raise ValueError("benchmark costs must be a non-empty finite non-negative sequence")
     rows: list[Metrics] = []
     horizon = min(policy.max_samples, min(len(record.samples) for record in rollouts))
-    fixed_counts = sorted({1, 2, 4, horizon})
+    fixed_counts = sorted(count for count in {1, 2, 4, horizon} if count <= horizon)
     for cost in costs:
         rows.append(
             _measure(
@@ -115,11 +120,19 @@ def benchmark(
                 f"BranchPilot λ={cost:g}",
                 "offline-rl",
                 cost,
+                horizon,
             )
         )
         for count in fixed_counts:
             rows.append(
-                _measure(rollouts, fixed_rule(count), f"fixed-{count}", "fixed", cost)
+                _measure(
+                    rollouts,
+                    fixed_rule(count),
+                    f"fixed-{count}",
+                    "fixed",
+                    cost,
+                    horizon,
+                )
             )
         for threshold in (0.67, 0.8, 1.0):
             rows.append(
@@ -129,6 +142,7 @@ def benchmark(
                     f"confidence-{threshold:g}",
                     "heuristic",
                     cost,
+                    horizon,
                 )
             )
         for streak in (2, 3):
@@ -139,6 +153,7 @@ def benchmark(
                     f"agreement-{streak}",
                     "heuristic",
                     cost,
+                    horizon,
                 )
             )
     return rows

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -14,7 +15,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from branchpilot.features import FEATURE_NAMES, prefix_correct, prefix_state
 from branchpilot.schema import Rollout
 
-ARTIFACT_VERSION = 1
+ARTIFACT_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,7 +25,6 @@ class TrainConfig:
     epochs: int = 80
     batch_size: int = 256
     learning_rate: float = 3e-4
-    target_update_interval: int = 4
     seed: int = 7
     costs: tuple[float, ...] = (0.0, 0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.25)
 
@@ -65,33 +65,72 @@ class BranchPilotPolicy:
         max_samples: int,
         hidden_size: int,
     ) -> None:
+        feature_mean = np.asarray(feature_mean, dtype=np.float32)
+        feature_std = np.asarray(feature_std, dtype=np.float32)
+        expected_shape = (len(FEATURE_NAMES),)
+        if max_samples < 1 or hidden_size < 1:
+            raise ValueError("policy dimensions must be positive")
+        if feature_mean.shape != expected_shape or feature_std.shape != expected_shape:
+            raise ValueError(f"normalization tensors must have shape {expected_shape}")
+        if not np.isfinite(feature_mean).all():
+            raise ValueError("feature means must be finite")
+        if not np.isfinite(feature_std).all() or np.any(feature_std <= 0):
+            raise ValueError("feature standard deviations must be finite and positive")
         self.network = network.eval()
-        self.feature_mean = np.asarray(feature_mean, dtype=np.float32)
-        self.feature_std = np.asarray(feature_std, dtype=np.float32)
+        self.feature_mean = feature_mean
+        self.feature_std = feature_std
         self.max_samples = max_samples
         self.hidden_size = hidden_size
 
-    def _input(self, features: np.ndarray, cost: float) -> torch.Tensor:
-        if cost < 0:
-            raise ValueError("cost must be non-negative")
-        standardized = (np.asarray(features, dtype=np.float32) - self.feature_mean) / self.feature_std
-        progress = float(features[0])
-        remaining = max(0.0, (1.0 - progress) * self.max_samples)
+    def _input(
+        self,
+        features: np.ndarray,
+        cost: float,
+        remaining_samples: float,
+    ) -> torch.Tensor:
+        features = np.asarray(features, dtype=np.float32)
+        if features.shape != (len(FEATURE_NAMES),) or not np.isfinite(features).all():
+            raise ValueError("features must be a finite BranchPilot state vector")
+        if not math.isfinite(cost) or cost < 0:
+            raise ValueError("cost must be finite and non-negative")
+        if not math.isfinite(remaining_samples) or remaining_samples < 0:
+            raise ValueError("remaining_samples must be finite and non-negative")
+        standardized = (features - self.feature_mean) / self.feature_std
         model_input = np.concatenate(
-            [standardized, np.asarray([cost, cost * remaining], dtype=np.float32)]
+            [
+                standardized,
+                np.asarray(
+                    [
+                        cost,
+                        remaining_samples / self.max_samples,
+                        cost * remaining_samples,
+                    ],
+                    dtype=np.float32,
+                ),
+            ]
         )
         return torch.from_numpy(model_input).unsqueeze(0)
 
     @torch.inference_mode()
-    def q_values(self, features: np.ndarray, cost: float) -> tuple[float, float]:
-        values = self.network(self._input(features, cost)).squeeze(0)
+    def q_values(
+        self,
+        features: np.ndarray,
+        cost: float,
+        remaining_samples: float | None = None,
+    ) -> tuple[float, float]:
+        if remaining_samples is None:
+            progress = float(features[0])
+            remaining_samples = max(0.0, (1.0 - progress) * self.max_samples)
+        values = self.network(self._input(features, cost, remaining_samples)).squeeze(0)
         return float(values[0]), float(values[1])
 
     def decide(self, rollout: Rollout, count: int, cost: float) -> Decision:
+        horizon = min(self.max_samples, len(rollout.samples))
+        if count < 1 or count > horizon:
+            raise ValueError(f"count must be in [1, {horizon}], got {count}")
         state = prefix_state(rollout, count, self.max_samples)
-        q_stop, q_continue = self.q_values(state.features, cost)
-        exhausted = count >= min(self.max_samples, len(rollout.samples))
-        action = "stop" if exhausted or q_stop >= q_continue else "continue"
+        q_stop, q_continue = self.q_values(state.features, cost, horizon - count)
+        action = "stop" if count >= horizon or q_stop >= q_continue else "continue"
         return Decision(action, q_stop, q_continue, count, state.majority_answer)
 
     def run(self, rollout: Rollout, cost: float) -> Decision:
@@ -121,21 +160,27 @@ class BranchPilotPolicy:
 
     @classmethod
     def load(cls, path: str | Path) -> BranchPilotPolicy:
-        payload = torch.load(path, map_location="cpu", weights_only=True)
-        if int(payload["artifact_version"]) != ARTIFACT_VERSION:
-            raise ValueError(f"unsupported policy artifact {payload['artifact_version']}")
-        if tuple(payload["feature_names"]) != FEATURE_NAMES:
-            raise ValueError("policy features do not match this BranchPilot version")
-        hidden_size = int(payload["hidden_size"])
-        network = _QNetwork(len(FEATURE_NAMES) + 2, hidden_size)
-        network.load_state_dict(payload["state_dict"])
-        return cls(
-            network,
-            payload["feature_mean"].numpy(),
-            payload["feature_std"].numpy(),
-            int(payload["max_samples"]),
-            hidden_size,
-        )
+        try:
+            payload = torch.load(path, map_location="cpu", weights_only=True)
+            if int(payload["artifact_version"]) != ARTIFACT_VERSION:
+                raise ValueError(f"unsupported policy artifact {payload['artifact_version']}")
+            if tuple(payload["feature_names"]) != FEATURE_NAMES:
+                raise ValueError("policy features do not match this BranchPilot version")
+            hidden_size = int(payload["hidden_size"])
+            max_samples = int(payload["max_samples"])
+            feature_mean = payload["feature_mean"].detach().cpu().numpy()
+            feature_std = payload["feature_std"].detach().cpu().numpy()
+            network = _QNetwork(len(FEATURE_NAMES) + 3, hidden_size)
+            network.load_state_dict(payload["state_dict"])
+            return cls(
+                network,
+                feature_mean,
+                feature_std,
+                max_samples,
+                hidden_size,
+            )
+        except (KeyError, RuntimeError, TypeError) as exc:
+            raise ValueError(f"invalid policy artifact: {exc}") from exc
 
 
 def _seed_everything(seed: int) -> None:
@@ -195,13 +240,24 @@ def _prepare_training_tensors(
     costs = np.asarray(tiled_cost, dtype=np.float32)
     remaining_array = np.asarray(tiled_remaining, dtype=np.float32)
     current_input = np.concatenate(
-        [current, costs[:, None], (costs * remaining_array)[:, None]], axis=1
+        [
+            current,
+            costs[:, None],
+            (remaining_array / config.max_samples)[:, None],
+            (costs * remaining_array)[:, None],
+        ],
+        axis=1,
     )
     next_remaining = np.maximum(remaining_array - 1.0, 0.0)
     next_input = np.concatenate(
-        [following, costs[:, None], (costs * next_remaining)[:, None]], axis=1
+        [
+            following,
+            costs[:, None],
+            (next_remaining / config.max_samples)[:, None],
+            (costs * next_remaining)[:, None],
+        ],
+        axis=1,
     )
-
     dataset = TensorDataset(
         torch.from_numpy(current_input),
         torch.from_numpy(next_input),
@@ -219,8 +275,14 @@ def train_policy(
     config = config or TrainConfig()
     if not rollouts:
         raise ValueError("training requires at least one rollout")
-    if not config.costs or any(cost < 0 for cost in config.costs):
-        raise ValueError("training costs must be a non-empty non-negative sequence")
+    if config.max_samples < 1 or config.hidden_size < 1:
+        raise ValueError("max_samples and hidden_size must be positive")
+    if config.epochs < 1 or config.batch_size < 1:
+        raise ValueError("epochs and batch_size must be positive")
+    if not math.isfinite(config.learning_rate) or config.learning_rate <= 0:
+        raise ValueError("learning_rate must be finite and positive")
+    if not config.costs or any(not math.isfinite(cost) or cost < 0 for cost in config.costs):
+        raise ValueError("training costs must be a non-empty finite non-negative sequence")
     _seed_everything(config.seed)
     dataset, feature_mean, feature_std = _prepare_training_tensors(rollouts, config)
     generator = torch.Generator().manual_seed(config.seed)
@@ -232,8 +294,8 @@ def train_policy(
         num_workers=0,
     )
 
-    network = _QNetwork(len(FEATURE_NAMES) + 2, config.hidden_size)
-    target = _QNetwork(len(FEATURE_NAMES) + 2, config.hidden_size)
+    network = _QNetwork(len(FEATURE_NAMES) + 3, config.hidden_size)
+    target = _QNetwork(len(FEATURE_NAMES) + 3, config.hidden_size)
     target.load_state_dict(network.state_dict())
     target.eval()
     optimizer = torch.optim.AdamW(network.parameters(), lr=config.learning_rate, weight_decay=1e-4)
@@ -246,18 +308,16 @@ def train_policy(
         for current, following, stop_reward, can_continue, next_can_continue, cost in loader:
             with torch.no_grad():
                 target_next = target(following)
-                next_value = target_next.max(dim=1).values
+                online_action = network(following).argmax(dim=1)
+                next_value = target_next.gather(1, online_action[:, None]).squeeze(1)
                 next_value = torch.where(next_can_continue, next_value, target_next[:, 0])
                 continue_target = -cost + next_value
 
             predicted = network(current)
             stop_loss = F.smooth_l1_loss(predicted[:, 0], stop_reward)
-            if can_continue.any():
-                continue_loss = F.smooth_l1_loss(
-                    predicted[can_continue, 1], continue_target[can_continue]
-                )
-            else:
-                continue_loss = predicted[:, 1].sum() * 0.0
+            continue_loss = F.smooth_l1_loss(
+                predicted[can_continue, 1], continue_target[can_continue]
+            )
             loss = stop_loss + continue_loss
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -267,7 +327,7 @@ def train_policy(
             batches += 1
 
         epoch_loss = total_loss / max(1, batches)
-        if (epoch + 1) % config.target_update_interval == 0:
+        if (epoch + 1) % 4 == 0:
             target.load_state_dict(network.state_dict())
 
     policy = BranchPilotPolicy(

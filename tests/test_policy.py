@@ -1,6 +1,8 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import torch
 
 from branchpilot.evaluate import benchmark
 from branchpilot.policy import BranchPilotPolicy, TrainConfig, train_policy
@@ -55,3 +57,50 @@ def test_benchmark_reports_observable_accuracy_and_compute(
     assert any(row.policy == "fixed-8" for row in rows)
     assert all(0.0 <= row.accuracy <= 1.0 for row in rows)
     assert all(1.0 <= row.average_samples <= 8.0 for row in rows)
+
+
+def test_truncated_trajectory_uses_its_actual_horizon(
+    trained: tuple[BranchPilotPolicy, list],
+) -> None:
+    policy, test = trained
+    short = replace(test[0], samples=test[0].samples[:3])
+    decision = policy.run(short, 0.05)
+    assert 1 <= decision.sample_count <= 3
+
+
+def test_non_finite_cost_is_rejected(trained: tuple[BranchPilotPolicy, list]) -> None:
+    policy, test = trained
+    with pytest.raises(ValueError, match="finite"):
+        policy.run(test[0], float("nan"))
+
+
+def test_zero_epoch_training_is_rejected() -> None:
+    records = make_synthetic_rollouts(2)
+    with pytest.raises(ValueError, match="epochs"):
+        train_policy(records, TrainConfig(epochs=0))
+
+
+def test_corrupt_normalization_artifact_is_rejected(
+    trained: tuple[BranchPilotPolicy, list], tmp_path: Path
+) -> None:
+    policy, _ = trained
+    path = tmp_path / "corrupt.pt"
+    policy.save(path)
+    payload = torch.load(path, map_location="cpu", weights_only=True)
+    payload["feature_std"][0] = 0
+    torch.save(payload, path)
+    with pytest.raises(ValueError, match="standard deviations"):
+        BranchPilotPolicy.load(path)
+
+
+def test_benchmark_caps_every_policy_at_shared_horizon(
+    trained: tuple[BranchPilotPolicy, list], tmp_path: Path
+) -> None:
+    policy, test = trained
+    path = tmp_path / "short-horizon.pt"
+    policy.save(path)
+    short_policy = BranchPilotPolicy.load(path)
+    short_policy.max_samples = 3
+    rows = benchmark(test, short_policy, costs=(0.05,))
+    assert all(row.average_samples <= 3 for row in rows)
+    assert not any(row.policy in {"fixed-4", "fixed-8"} for row in rows)
