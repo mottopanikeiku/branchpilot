@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -16,11 +17,20 @@ class Sample:
     token_count: int
     mean_logprob: float | None = None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.answer, (str, type(None))):
+            raise TypeError("sample answer must be a string or None")
+        if self.token_count < 0:
+            raise ValueError("sample token_count cannot be negative")
+        if self.mean_logprob is not None and not math.isfinite(self.mean_logprob):
+            raise ValueError("sample mean_logprob must be finite")
+
+
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> Sample:
         return cls(
             text=str(value["text"]),
-            answer=value.get("answer"),
+            answer=(None if value.get("answer") is None else str(value["answer"])),
             token_count=int(value["token_count"]),
             mean_logprob=(
                 None if value.get("mean_logprob") is None else float(value["mean_logprob"])
@@ -42,6 +52,9 @@ class Rollout:
             raise ValueError("a rollout needs at least one sample")
         if not self.gold:
             raise ValueError("gold answer cannot be empty")
+
+        if self.prompt_tokens < 0:
+            raise ValueError("prompt_tokens cannot be negative")
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
