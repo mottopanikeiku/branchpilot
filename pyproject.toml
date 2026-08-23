@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "branchpilot"
+version = "0.1.0"
+description = "Budget-conditioned offline RL for adaptive LLM inference-time compute"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "mottopanikeiku" }]
+dependencies = [
+  "numpy>=1.26,<3",
+  "rich>=13.7,<15",
+  "torch>=2.2,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2,<9",
+  "ruff>=0.6,<1",
+]
+modal = [
+  "modal>=1.5,<2",
+]
+
+[project.scripts]
+branchpilot = "branchpilot.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/branchpilot"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
