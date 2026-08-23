@@ -28,7 +28,7 @@ def make_synthetic_rollouts(
         probability_correct = 0.96 - 0.72 * difficulty
         common_error = str(gold_value + max(1, round(difficulty * operands)))
         samples: list[Sample] = []
-        for sample_index in range(max_samples):
+        for _ in range(max_samples):
             correct = rng.random() < probability_correct
             if correct:
                 answer = gold
