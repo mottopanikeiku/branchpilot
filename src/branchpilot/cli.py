@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import random
 from pathlib import Path
 
 from rich.console import Console
@@ -21,12 +23,17 @@ def _costs(value: str) -> tuple[float, ...]:
         parsed = tuple(float(item) for item in value.split(",") if item.strip())
     except ValueError as exc:
         raise argparse.ArgumentTypeError("costs must be comma-separated numbers") from exc
-    if not parsed or any(cost < 0 for cost in parsed):
-        raise argparse.ArgumentTypeError("costs must be non-empty and non-negative")
+    if not parsed or any(not math.isfinite(cost) or cost < 0 for cost in parsed):
+        raise argparse.ArgumentTypeError("costs must be non-empty, finite, and non-negative")
     return parsed
 
 
-def _write_benchmark(data_path: Path, policy_path: Path, output: Path, costs: tuple[float, ...]) -> dict:
+def _write_benchmark(
+    data_path: Path,
+    policy_path: Path,
+    output: Path,
+    costs: tuple[float, ...],
+) -> dict:
     rollouts = read_jsonl(data_path)
     policy = BranchPilotPolicy.load(policy_path)
     rows = benchmark(rollouts, policy, costs)
@@ -56,7 +63,10 @@ def _print_benchmark(payload: dict) -> None:
     for cost in payload["costs"]:
         at_cost = [row for row in rows if abs(row["scoring_cost"] - cost) < 1e-9]
         learned = next(row for row in at_cost if row["family"] == "offline-rl")
-        baseline = max((row for row in at_cost if row["family"] != "offline-rl"), key=lambda row: row["utility"])
+        baseline = max(
+            (row for row in at_cost if row["family"] != "offline-rl"),
+            key=lambda row: row["utility"],
+        )
         for row, style in ((learned, "bold magenta"), (baseline, "dim")):
             table.add_row(
                 f"{cost:g}",
@@ -75,7 +85,26 @@ def command_synthetic(args: argparse.Namespace) -> None:
     output = Path(args.output_dir)
     write_jsonl(output / "train.jsonl", train)
     write_jsonl(output / "test.jsonl", test)
-    console.print(f"Wrote [bold]{len(train)}[/] train and [bold]{len(test)}[/] test trajectories to {output}")
+    console.print(
+        f"Wrote [bold]{len(train)}[/] train and [bold]{len(test)}[/] "
+        f"test trajectories to {output}"
+    )
+
+
+def command_split(args: argparse.Namespace) -> None:
+    records = read_jsonl(args.data)
+    requested = args.train_size + args.test_size
+    if args.train_size < 1 or args.test_size < 1 or requested > len(records):
+        raise ValueError(
+            f"requested positive splits totaling {requested} from {len(records)} records"
+        )
+    random.Random(args.seed).shuffle(records)
+    write_jsonl(args.train_output, records[: args.train_size])
+    write_jsonl(args.test_output, records[args.train_size : requested])
+    console.print(
+        f"Wrote [bold]{args.train_size}[/] train and [bold]{args.test_size}[/] "
+        f"held-out trajectories with seed {args.seed}"
+    )
 
 
 def command_train(args: argparse.Namespace) -> None:
@@ -92,7 +121,9 @@ def command_train(args: argparse.Namespace) -> None:
     policy, training = train_policy(rollouts, config)
     policy.save(args.output, training)
     console.print(
-        f"Trained on [bold]{len(rollouts)}[/] trajectories / [bold]{training['states']}[/] state-cost pairs; final TD loss [bold]{training['final_loss']:.5f}[/]"
+        f"Trained on [bold]{len(rollouts)}[/] trajectories / "
+        f"[bold]{training['states']}[/] state-cost pairs; final Bellman loss "
+        f"[bold]{training['final_loss']:.5f}[/]"
     )
     console.print(f"Saved policy to [cyan]{args.output}[/]")
 
@@ -134,7 +165,8 @@ def command_demo(args: argparse.Namespace) -> None:
     final = trace[-1]
     verdict = "correct" if final.majority_answer == rollout.gold else "incorrect"
     console.print(
-        f"Stopped after [bold]{final.sample_count}[/] samples with [bold]{final.majority_answer}[/] — {verdict}; gold={rollout.gold}"
+        f"Stopped after [bold]{final.sample_count}[/] samples with "
+        f"[bold]{final.majority_answer}[/] — {verdict}; gold={rollout.gold}"
     )
 
 
@@ -178,6 +210,15 @@ def build_parser() -> argparse.ArgumentParser:
     synthetic.add_argument("--seed", type=int, default=17)
     synthetic.set_defaults(handler=command_synthetic)
 
+    split = subparsers.add_parser("split", help="create deterministic disjoint data splits")
+    split.add_argument("--data", required=True)
+    split.add_argument("--train-output", required=True)
+    split.add_argument("--test-output", required=True)
+    split.add_argument("--train-size", type=int, required=True)
+    split.add_argument("--test-size", type=int, required=True)
+    split.add_argument("--seed", type=int, default=17)
+    split.set_defaults(handler=command_split)
+
     train = subparsers.add_parser("train", help="fit the offline Q-controller")
     train.add_argument("--data", required=True)
     train.add_argument("--output", default="artifacts/policy.pt")
@@ -187,10 +228,16 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--batch-size", type=int, default=256)
     train.add_argument("--learning-rate", type=float, default=3e-4)
     train.add_argument("--seed", type=int, default=7)
-    train.add_argument("--costs", type=_costs, default=_costs("0,0.01,0.025,0.05,0.075,0.1,0.15,0.25"))
+    train.add_argument(
+        "--costs",
+        type=_costs,
+        default=_costs("0,0.01,0.025,0.05,0.075,0.1,0.15,0.25"),
+    )
     train.set_defaults(handler=command_train)
 
-    evaluate = subparsers.add_parser("evaluate", help="compare RL with fixed and heuristic policies")
+    evaluate = subparsers.add_parser(
+        "evaluate", help="compare RL with fixed and heuristic policies"
+    )
     evaluate.add_argument("--data", required=True)
     evaluate.add_argument("--policy", required=True)
     evaluate.add_argument("--output", default="artifacts/benchmark.json")
@@ -213,7 +260,9 @@ def build_parser() -> argparse.ArgumentParser:
     quickstart.add_argument("--max-samples", type=int, default=8)
     quickstart.add_argument("--epochs", type=int, default=60)
     quickstart.add_argument("--seed", type=int, default=17)
-    quickstart.add_argument("--costs", type=_costs, default=_costs("0.01,0.025,0.05,0.075,0.1,0.15"))
+    quickstart.add_argument(
+        "--costs", type=_costs, default=_costs("0.01,0.025,0.05,0.075,0.1,0.15")
+    )
     quickstart.set_defaults(handler=command_quickstart)
     return parser
 
