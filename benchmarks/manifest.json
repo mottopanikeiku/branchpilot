@@ -1,0 +1,44 @@
+{
+  "benchmark_schema": 1,
+  "controller": {
+    "evaluation_records": 256,
+    "hidden_size": 128,
+    "inference_costs": [
+      0.01,
+      0.025,
+      0.05,
+      0.075,
+      0.1,
+      0.15
+    ],
+    "max_samples": 8,
+    "split_seed": 23,
+    "training_epochs": 120,
+    "training_records": 512
+  },
+  "data": {
+    "controller_source_records": 768,
+    "dataset": "openai/gsm8k",
+    "dataset_split": "train",
+    "sampling_seed": 17
+  },
+  "modal": {
+    "completion_tokens_all_generated_splits": 1680954,
+    "generation_seconds_all_generated_splits": 607.293909087,
+    "gpu": "L4",
+    "run_url": "https://modal.com/apps/mottopanikeiku/main/ap-wKmjhfXUjPrbOOHWJQEuSa",
+    "throughput_tokens_per_second": 2767.941477508198
+  },
+  "model": {
+    "id": "Qwen/Qwen2.5-1.5B-Instruct",
+    "revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+    "samples_per_prompt": 8,
+    "temperature": 0.7,
+    "top_p": 0.95
+  },
+  "runtime": {
+    "tokenizers": "0.21.1",
+    "transformers": "4.55.2",
+    "vllm": "0.10.2"
+  }
+}

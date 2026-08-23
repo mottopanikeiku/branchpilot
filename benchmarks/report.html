@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>BranchPilot · held-out policy evaluation</title>
+<style>
+:root {
+  color-scheme: dark;
+  --canvas: #080a0f;
+  --surface: #0d1119;
+  --surface-raised: #121824;
+  --rule: #273142;
+  --rule-strong: #3a465a;
+  --text: #edf1f7;
+  --muted: #a7b1c2;
+  --subtle: #778397;
+  --learned: #c4b5fd;
+  --learned-strong: #e2dcff;
+  --fixed: #74aef2;
+  --heuristic: #e8b15a;
+  --space-1: .25rem;
+  --space-2: .5rem;
+  --space-3: .75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+  --space-9: 6rem;
+  --radius-sm: .375rem;
+  --radius-md: .75rem;
+  --shadow: 0 2rem 5rem rgb(2 5 11 / .42);
+  font-family: "Aptos", "Helvetica Neue", sans-serif;
+  background: var(--canvas);
+  color: var(--text);
+}
+* { box-sizing: border-box; }
+html { background: var(--canvas); }
+body {
+  margin: 0;
+  min-width: 20rem;
+  background: var(--canvas);
+  color: var(--text);
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+}
+.skip-link {
+  position: fixed;
+  z-index: 10;
+  top: var(--space-3);
+  left: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  transform: translateY(-200%);
+  border-radius: var(--radius-sm);
+  background: var(--text);
+  color: var(--canvas);
+  font-weight: 700;
+}
+.skip-link:focus { transform: translateY(0); }
+.page-shell {
+  width: min(calc(100% - 2rem), 76rem);
+  margin-inline: auto;
+}
+.hero {
+  padding-block: var(--space-7) var(--space-8);
+  border-bottom: 1px solid var(--rule);
+}
+.topline {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-bottom: var(--space-6);
+  border-bottom: 1px solid var(--rule);
+  color: var(--subtle);
+  font: 700 .6875rem/1.3 "IBM Plex Mono", "SFMono-Regular", "Cascadia Mono", monospace;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.topline span:last-child { text-align: right; }
+.kicker {
+  margin: var(--space-8) 0 var(--space-4);
+  color: var(--learned);
+  font: 700 .75rem/1.3 "IBM Plex Mono", "SFMono-Regular", "Cascadia Mono", monospace;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+h1, h2, p { margin-top: 0; }
+h1 {
+  max-width: 58rem;
+  margin-bottom: var(--space-5);
+  font-family: "Charter", "Georgia", serif;
+  font-size: clamp(3.5rem, 8vw, 6rem);
+  font-weight: 700;
+  letter-spacing: -.05em;
+  line-height: .94;
+}
+h1 span { color: var(--learned-strong); }
+.lede {
+  max-width: 48rem;
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: clamp(1.0625rem, 2vw, 1.25rem);
+  line-height: 1.65;
+}
+main { display: block; }
+.summary-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(17rem, .65fr);
+  gap: var(--space-7);
+  padding-block: var(--space-7);
+  border-bottom: 1px solid var(--rule);
+}
+.measure-label {
+  display: block;
+  margin-bottom: var(--space-3);
+  color: var(--muted);
+  font-size: .8125rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.measure {
+  display: block;
+  margin-bottom: var(--space-4);
+  font: 700 clamp(3.5rem, 8vw, 5rem)/.92 "IBM Plex Mono", "SFMono-Regular", monospace;
+  letter-spacing: -.06em;
+}
+.measure-note {
+  max-width: 39rem;
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: .9375rem;
+}
+.measure-note strong { color: var(--learned-strong); font-weight: 700; }
+.summary-list {
+  margin: 0;
+  border-left: 1px solid var(--rule);
+}
+.summary-list div {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-4);
+  padding: var(--space-4) 0 var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--rule);
+}
+.summary-list div:first-child { padding-top: 0; }
+.summary-list div:last-child { padding-bottom: 0; border-bottom: 0; }
+.summary-list dt { color: var(--subtle); font-size: .8125rem; }
+.summary-list dd {
+  margin: 0;
+  color: var(--text);
+  font: 700 .875rem/1.5 "IBM Plex Mono", "SFMono-Regular", monospace;
+  text-align: right;
+}
+.report-section { padding-block: var(--space-9); border-bottom: 1px solid var(--rule); }
+.section-heading {
+  display: grid;
+  grid-template-columns: minmax(15rem, .72fr) minmax(18rem, 1fr);
+  gap: var(--space-7);
+  align-items: end;
+  margin-bottom: var(--space-7);
+}
+.section-index {
+  display: block;
+  margin-bottom: var(--space-3);
+  color: var(--learned);
+  font: 700 .6875rem/1.3 "IBM Plex Mono", "SFMono-Regular", monospace;
+  letter-spacing: .14em;
+}
+h2 {
+  margin-bottom: 0;
+  font-family: "Charter", "Georgia", serif;
+  font-size: clamp(2rem, 4vw, 3rem);
+  letter-spacing: -.035em;
+  line-height: 1.05;
+}
+.section-heading p {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: .9375rem;
+  line-height: 1.7;
+}
+figure { margin: 0; }
+.figure-shell {
+  overflow: hidden;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.chart-viewport { overflow-x: auto; }
+.chart-viewport svg { display: block; width: 100%; height: auto; }
+figcaption {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-6);
+  padding: var(--space-5) var(--space-6);
+  border-top: 1px solid var(--rule);
+  color: var(--subtle);
+  font-size: .75rem;
+  line-height: 1.65;
+}
+figcaption strong { color: var(--muted); font-weight: 700; }
+.method-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin-top: var(--space-7);
+  border-block: 1px solid var(--rule);
+}
+.method-strip article {
+  padding: var(--space-5) var(--space-6);
+  border-right: 1px solid var(--rule);
+}
+.method-strip article:first-child { padding-left: 0; }
+.method-strip article:last-child { padding-right: 0; border-right: 0; }
+.method-strip h3 {
+  margin: 0 0 var(--space-2);
+  color: var(--text);
+  font-size: .8125rem;
+}
+.method-strip p {
+  margin-bottom: 0;
+  color: var(--subtle);
+  font-size: .75rem;
+  line-height: 1.6;
+}
+.formula {
+  color: var(--learned-strong);
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+}
+.table-shell {
+  overflow-x: auto;
+  border-top: 1px solid var(--rule-strong);
+  border-bottom: 1px solid var(--rule);
+}
+table {
+  width: 100%;
+  min-width: 47rem;
+  border-collapse: collapse;
+  font-size: .8125rem;
+}
+th, td {
+  padding: var(--space-4) var(--space-3);
+  border-bottom: 1px solid var(--rule);
+  text-align: left;
+  white-space: nowrap;
+}
+thead th {
+  color: var(--subtle);
+  font: 700 .6875rem/1.3 "IBM Plex Mono", "SFMono-Regular", monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+tbody th { color: var(--text); font-weight: 600; }
+tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover { background: var(--surface-raised); }
+.numeric {
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.family-key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+}
+.family-key span { width: .5rem; height: .5rem; border-radius: 50%; background: var(--muted); }
+.family-offline-rl span { background: var(--learned); transform: rotate(45deg); border-radius: .0625rem; }
+.family-fixed span { background: var(--fixed); border-radius: .125rem; }
+.family-heuristic span { background: var(--heuristic); }
+details { margin-top: var(--space-7); border-block: 1px solid var(--rule); }
+summary {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-block: var(--space-5);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: .875rem;
+  font-weight: 700;
+  list-style: none;
+}
+summary::-webkit-details-marker { display: none; }
+summary::after {
+  content: "+";
+  color: var(--learned);
+  font: 700 1rem/1 "IBM Plex Mono", "SFMono-Regular", monospace;
+}
+details[open] summary::after { content: "−"; }
+summary:focus-visible { outline: 2px solid var(--learned); outline-offset: var(--space-1); }
+details .table-shell { margin-bottom: var(--space-5); }
+.report-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding-block: var(--space-6) var(--space-8);
+  color: var(--subtle);
+  font: 600 .6875rem/1.6 "IBM Plex Mono", "SFMono-Regular", monospace;
+  letter-spacing: .04em;
+}
+@media (max-width: 48rem) {
+  .hero { padding-top: var(--space-5); }
+  .topline { flex-direction: column; }
+  .topline span:last-child { text-align: left; }
+  .kicker { margin-top: var(--space-7); }
+  .summary-panel, .section-heading { grid-template-columns: 1fr; }
+  .summary-list { border-left: 0; border-top: 1px solid var(--rule); padding-top: var(--space-5); }
+  .summary-list div { padding-left: 0; }
+  .report-section { padding-block: var(--space-8); }
+  .chart-viewport svg { width: 48rem; max-width: none; }
+  figcaption, .method-strip { grid-template-columns: 1fr; }
+  figcaption { gap: var(--space-3); }
+  .method-strip article {
+    padding: var(--space-5) 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .method-strip article:last-child { border-bottom: 0; }
+  .report-footer { flex-direction: column; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .skip-link { transition: transform 160ms ease-out; }
+}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#report-content">Skip to results</a>
+<div class="page-shell">
+<header class="hero">
+  <div class="topline">
+    <span>BranchPilot / Research evaluation</span>
+    <span>Standalone offline artifact</span>
+  </div>
+  <p class="kicker">Cost-conditioned stopping policy</p>
+  <h1>Adaptive inference,<br><span>measured.</span></h1>
+  <p class="lede">BranchPilot learns when another language-model sample is worth its inference cost. This report maps the learned policy sweep against fixed-budget and rule-based baselines on held-out trajectories.</p>
+</header>
+<main id="report-content">
+  <section class="summary-panel" aria-labelledby="summary-title">
+    <div>
+      <span class="measure-label" id="summary-title">Peak learned accuracy</span>
+      <strong class="measure">68.8%</strong>
+      <p class="measure-note"><strong>-4.7 percentage points</strong> against the strongest baseline, with 33.8% fewer samples at the respective highest-accuracy operating points.</p>
+    </div>
+    <dl class="summary-list">
+      <div><dt>Compute at peak</dt><dd>3.71 samples</dd></div>
+      <div><dt>Strongest baseline</dt><dd>73.4% / 5.61</dd></div>
+      <div><dt>Held-out set</dt><dd>256 trajectories</dd></div>
+    </dl>
+  </section>
+
+  <section class="report-section" aria-labelledby="frontier-title">
+    <div class="section-heading">
+      <div>
+        <span class="section-index">01 / FRONTIER</span>
+        <h2 id="frontier-title">Accuracy–compute plane</h2>
+      </div>
+      <p>Each marker is one unique operating policy. Learned policies are large violet diamonds connected by their cost sweep; every fixed and heuristic baseline remains directly identified in the plot.</p>
+    </div>
+    <figure>
+      <div class="figure-shell">
+        <div class="chart-viewport"><svg xmlns="http://www.w3.org/2000/svg" width="1120" height="680" viewBox="0 0 1120 680" preserveAspectRatio="xMidYMid meet" role="img" aria-labelledby="branchpilot-chart-title branchpilot-chart-desc"><title id="branchpilot-chart-title">Accuracy × inference compute</title><desc id="branchpilot-chart-desc">Scatter plot of 15 unique policies. Large violet diamonds show BranchPilot learned policies; blue squares and amber circles show baselines.</desc><defs><clipPath id="branchpilot-plot-clip"><rect x="94" y="132" width="972" height="466"/></clipPath><style>text{font-family:"Aptos","Helvetica Neue",sans-serif}.chart-title{font-family:"Charter","Georgia",serif;font-size:28px;font-weight:700;fill:#edf1f7;letter-spacing:-.3px}.chart-kicker,.tick,.policy-label,.learned-label{font-family:"IBM Plex Mono","SFMono-Regular","Cascadia Mono",monospace}.chart-kicker{font-size:11px;font-weight:700;fill:#c4b5fd;letter-spacing:1.7px}.subtitle{font-size:13px;fill:#a7b1c2}.legend{font-size:12px;font-weight:600;fill:#a7b1c2}.tick{font-size:11px;fill:#778397}.axis-label{font-size:13px;font-weight:600;fill:#a7b1c2}.plot-note{font-size:11px;fill:#778397}.grid{stroke:#273142;stroke-width:1}.grid-vertical{stroke:#273142;stroke-width:1;stroke-dasharray:3 7}.learned-line{fill:none;stroke:#c4b5fd;stroke-width:2.5;stroke-opacity:.55;stroke-linejoin:round;stroke-linecap:round}.learned-halo{fill:#c4b5fd;fill-opacity:.12}.learned-point{fill:#c4b5fd;stroke:#080a0f;stroke-width:3}.policy-label,.learned-label{paint-order:stroke;stroke:#0d1119;stroke-width:4px;stroke-linejoin:round}.policy-label{font-size:10px;fill:#a7b1c2}.learned-label{font-size:10px;font-weight:700;fill:#e2dcff}</style></defs><rect width="1120" height="680" rx="12" fill="#080a0f"/><rect x="1" y="1" width="1118" height="678" rx="11" fill="none" stroke="#273142"/><text x="94" y="35" class="chart-kicker">HELD-OUT POLICY EVALUATION</text><text x="94" y="67" class="chart-title">Accuracy × inference compute</text><text x="94" y="91" class="subtitle">Unique operating points · 256 held-out trajectories</text><rect x="94" y="132" width="972" height="466" rx="6" fill="#0d1119" stroke="#273142"/><path d="M 94 105 L 101 112 L 94 119 L 87 112 Z" fill="#c4b5fd"/><text x="107" y="116" class="legend">BranchPilot · learned</text><rect x="334" y="107" width="10" height="10" rx="2" fill="#74aef2"/><text x="352" y="116" class="legend">Fixed-sample baseline</text><circle cx="574" cy="112" r="5" fill="#e8b15a"/><text x="587" y="116" class="legend">Heuristic baseline</text><line x1="94" y1="598.0" x2="1066" y2="598.0" class="grid"/><text x="81" y="602.0" text-anchor="end" class="tick">50.3%</text><line x1="94" y1="504.8" x2="1066" y2="504.8" class="grid"/><text x="81" y="508.8" text-anchor="end" class="tick">55.5%</text><line x1="94" y1="411.6" x2="1066" y2="411.6" class="grid"/><text x="81" y="415.6" text-anchor="end" class="tick">60.7%</text><line x1="94" y1="318.4" x2="1066" y2="318.4" class="grid"/><text x="81" y="322.4" text-anchor="end" class="tick">65.9%</text><line x1="94" y1="225.2" x2="1066" y2="225.2" class="grid"/><text x="81" y="229.2" text-anchor="end" class="tick">71.1%</text><line x1="94" y1="132.0" x2="1066" y2="132.0" class="grid"/><text x="81" y="136.0" text-anchor="end" class="tick">76.3%</text><line x1="94.0" y1="132" x2="94.0" y2="598" class="grid-vertical"/><text x="94.0" y="625" text-anchor="middle" class="tick">1</text><line x1="232.9" y1="132" x2="232.9" y2="598" class="grid-vertical"/><text x="232.9" y="625" text-anchor="middle" class="tick">2</text><line x1="371.7" y1="132" x2="371.7" y2="598" class="grid-vertical"/><text x="371.7" y="625" text-anchor="middle" class="tick">3</text><line x1="510.6" y1="132" x2="510.6" y2="598" class="grid-vertical"/><text x="510.6" y="625" text-anchor="middle" class="tick">4</text><line x1="649.4" y1="132" x2="649.4" y2="598" class="grid-vertical"/><text x="649.4" y="625" text-anchor="middle" class="tick">5</text><line x1="788.3" y1="132" x2="788.3" y2="598" class="grid-vertical"/><text x="788.3" y="625" text-anchor="middle" class="tick">6</text><line x1="927.1" y1="132" x2="927.1" y2="598" class="grid-vertical"/><text x="927.1" y="625" text-anchor="middle" class="tick">7</text><line x1="1066.0" y1="132" x2="1066.0" y2="598" class="grid-vertical"/><text x="1066.0" y="625" text-anchor="middle" class="tick">8</text><text x="580.0" y="656" text-anchor="middle" class="axis-label">Average samples per prompt</text><text x="25" y="365.0" transform="rotate(-90 25 365.0)" text-anchor="middle" class="axis-label">Exact-match accuracy</text><text x="1052" y="154" text-anchor="end" class="plot-note">higher accuracy ↑ · lower compute ←</text><g><title>fixed-1: 53.1% accuracy at 1.00 samples</title><rect x="89.0" y="542.0" width="10" height="10" rx="2" fill="#74aef2" stroke="#0d1119" stroke-width="2"/></g><g><title>fixed-2: 58.2% accuracy at 2.00 samples</title><rect x="227.9" y="451.0" width="10" height="10" rx="2" fill="#74aef2" stroke="#0d1119" stroke-width="2"/></g><g><title>fixed-4: 66.8% accuracy at 4.00 samples</title><rect x="505.6" y="297.0" width="10" height="10" rx="2" fill="#74aef2" stroke="#0d1119" stroke-width="2"/></g><g><title>fixed-8: 73.4% accuracy at 8.00 samples</title><rect x="1061.0" y="178.0" width="10" height="10" rx="2" fill="#74aef2" stroke="#0d1119" stroke-width="2"/></g><g><title>confidence-0.67: 71.9% accuracy at 4.66 samples</title><circle cx="602.2" cy="211.0" r="5" fill="#e8b15a" stroke="#0d1119" stroke-width="2"/></g><g><title>confidence-0.8: 71.9% accuracy at 4.91 samples</title><circle cx="636.4" cy="211.0" r="5" fill="#e8b15a" stroke="#0d1119" stroke-width="2"/></g><g><title>confidence-1: 71.9% accuracy at 4.98 samples</title><circle cx="646.2" cy="211.0" r="5" fill="#e8b15a" stroke="#0d1119" stroke-width="2"/></g><g><title>agreement-2: 68.8% accuracy at 3.89 samples</title><circle cx="495.9" cy="267.0" r="5" fill="#e8b15a" stroke="#0d1119" stroke-width="2"/></g><g><title>agreement-3: 73.4% accuracy at 5.61 samples</title><circle cx="734.0" cy="183.0" r="5" fill="#e8b15a" stroke="#0d1119" stroke-width="2"/></g><text x="94.0" y="535.0" text-anchor="middle" class="policy-label">fixed-1</text><text x="232.9" y="475.0" text-anchor="middle" class="policy-label">fixed-2</text><text x="510.6" y="290.0" text-anchor="middle" class="policy-label">fixed-4</text><text x="1059.0" y="202.0" text-anchor="end" class="policy-label">fixed-8</text><line x1="734.0" y1="183.0" x2="745.0" y2="183.0" stroke="#e8b15a" stroke-opacity=".45"/><text x="749.0" y="186.0" text-anchor="start" class="policy-label">agreement-3</text><line x1="602.2" y1="211.0" x2="613.2" y2="211.0" stroke="#e8b15a" stroke-opacity=".45"/><text x="617.2" y="214.0" text-anchor="start" class="policy-label">confidence-0.67</text><line x1="636.4" y1="211.0" x2="647.4" y2="228.0" stroke="#e8b15a" stroke-opacity=".45"/><text x="651.4" y="231.0" text-anchor="start" class="policy-label">confidence-0.8</text><line x1="646.2" y1="211.0" x2="657.2" y2="245.0" stroke="#e8b15a" stroke-opacity=".45"/><text x="661.2" y="248.0" text-anchor="start" class="policy-label">confidence-1</text><line x1="495.9" y1="267.0" x2="506.9" y2="267.0" stroke="#e8b15a" stroke-opacity=".45"/><text x="510.9" y="270.0" text-anchor="start" class="policy-label">agreement-2</text><path d="M 177.5 421.0 L 222.0 365.0 L 274.6 351.0 L 335.4 358.0 L 471.0 267.0 L 539.3 267.0" class="learned-line" clip-path="url(#branchpilot-plot-clip)"/><g><title>BranchPilot λ=0.15: 60.2% accuracy at 1.60 samples</title><circle cx="177.5" cy="421.0" r="13" class="learned-halo"/><path d="M 177.5 413.0 L 185.5 421.0 L 177.5 429.0 L 169.5 421.0 Z" class="learned-point"/></g><text x="177.5" y="404.0" text-anchor="middle" class="learned-label">λ=0.15</text><g><title>BranchPilot λ=0.1: 63.3% accuracy at 1.92 samples</title><circle cx="222.0" cy="365.0" r="13" class="learned-halo"/><path d="M 222.0 357.0 L 230.0 365.0 L 222.0 373.0 L 214.0 365.0 Z" class="learned-point"/></g><text x="222.0" y="392.0" text-anchor="middle" class="learned-label">λ=0.1</text><g><title>BranchPilot λ=0.075: 64.1% accuracy at 2.30 samples</title><circle cx="274.6" cy="351.0" r="13" class="learned-halo"/><path d="M 274.6 343.0 L 282.6 351.0 L 274.6 359.0 L 266.6 351.0 Z" class="learned-point"/></g><text x="274.6" y="334.0" text-anchor="middle" class="learned-label">λ=0.075</text><g><title>BranchPilot λ=0.05: 63.7% accuracy at 2.74 samples</title><circle cx="335.4" cy="358.0" r="13" class="learned-halo"/><path d="M 335.4 350.0 L 343.4 358.0 L 335.4 366.0 L 327.4 358.0 Z" class="learned-point"/></g><text x="335.4" y="385.0" text-anchor="middle" class="learned-label">λ=0.05</text><g><title>BranchPilot λ=0.025: 68.8% accuracy at 3.71 samples</title><circle cx="471.0" cy="267.0" r="13" class="learned-halo"/><path d="M 471.0 259.0 L 479.0 267.0 L 471.0 275.0 L 463.0 267.0 Z" class="learned-point"/></g><text x="471.0" y="250.0" text-anchor="middle" class="learned-label">λ=0.025</text><g><title>BranchPilot λ=0.01: 68.8% accuracy at 4.21 samples</title><circle cx="539.3" cy="267.0" r="13" class="learned-halo"/><path d="M 539.3 259.0 L 547.3 267.0 L 539.3 275.0 L 531.3 267.0 Z" class="learned-point"/></g><text x="539.3" y="294.0" text-anchor="middle" class="learned-label">λ=0.01</text></svg></div>
+        <figcaption>
+          <span><strong>Figure 1.</strong> Exact-match accuracy against average samples per prompt. Points toward the upper-left dominate.</span>
+          <span><strong>Reading the sweep.</strong> Diamond labels report λ, the scoring-cost condition. The connecting line shows policy progression, not interpolation.</span>
+        </figcaption>
+      </div>
+    </figure>
+    <div class="method-strip" aria-label="Evaluation method">
+      <article>
+        <h3>Objective</h3>
+        <p><span class="formula">utility = accuracy − λ × samples</span>. Increasing λ rewards earlier stopping.</p>
+      </article>
+      <article>
+        <h3>Learned policy</h3>
+        <p>A cost-conditioned stop/continue Q-policy evaluated over pre-generated self-consistency trajectories.</p>
+      </article>
+      <article>
+        <h3>Reference policies</h3>
+        <p>Fixed sample budgets and confidence/agreement heuristics establish the non-learned envelope.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="report-section" aria-labelledby="sweep-title">
+    <div class="section-heading">
+      <div>
+        <span class="section-index">02 / POLICY SWEEP</span>
+        <h2 id="sweep-title">Learned operating points</h2>
+      </div>
+      <p>The learned family is ordered by average inference compute. Utility is reported at the policy’s scoring-cost condition, preserving the benchmark’s cost-sensitive comparison.</p>
+    </div>
+    <div class="table-shell">
+      <table aria-label="Learned policy operating points">
+        <thead><tr><th>Family</th><th>Policy</th><th class="numeric">λ</th><th class="numeric">Accuracy</th><th class="numeric">Avg. samples</th><th class="numeric">Utility</th></tr></thead>
+        <tbody><tr><td><span class="family-key family-offline-rl"><span aria-hidden="true"></span>Learned</span></td><th scope="row">BranchPilot λ=0.15</th><td class="numeric">0.15</td><td class="numeric">60.2%</td><td class="numeric">1.60</td><td class="numeric">0.361</td></tr><tr><td><span class="family-key family-offline-rl"><span aria-hidden="true"></span>Learned</span></td><th scope="row">BranchPilot λ=0.1</th><td class="numeric">0.1</td><td class="numeric">63.3%</td><td class="numeric">1.92</td><td class="numeric">0.441</td></tr><tr><td><span class="family-key family-offline-rl"><span aria-hidden="true"></span>Learned</span></td><th scope="row">BranchPilot λ=0.075</th><td class="numeric">0.075</td><td class="numeric">64.1%</td><td class="numeric">2.30</td><td class="numeric">0.468</td></tr><tr><td><span class="family-key family-offline-rl"><span aria-hidden="true"></span>Learned</span></td><th scope="row">BranchPilot λ=0.05</th><td class="numeric">0.05</td><td class="numeric">63.7%</td><td class="numeric">2.74</td><td class="numeric">0.500</td></tr><tr><td><span class="family-key family-offline-rl"><span aria-hidden="true"></span>Learned</span></td><th scope="row">BranchPilot λ=0.025</th><td class="numeric">0.025</td><td class="numeric">68.8%</td><td class="numeric">3.71</td><td class="numeric">0.595</td></tr><tr><td><span class="family-key family-offline-rl"><span aria-hidden="true"></span>Learned</span></td><th scope="row">BranchPilot λ=0.01</th><td class="numeric">0.01</td><td class="numeric">68.8%</td><td class="numeric">4.21</td><td class="numeric">0.645</td></tr></tbody>
+      </table>
+    </div>
+    <details>
+      <summary>Complete evaluation matrix <span>60 scored rows</span></summary>
+      <div class="table-shell">
+        <table aria-label="Complete benchmark evaluation matrix">
+          <thead><tr><th>Family</th><th>Policy</th><th class="numeric">Scoring cost</th><th class="numeric">Accuracy</th><th class="numeric">Avg. samples</th><th class="numeric">Utility</th></tr></thead>
+          <tbody><tr><td><span class="family-key family-offline-rl"><span aria-hidden="true"></span>Learned</span></td><th scope="row">BranchPilot λ=0.01</th><td class="numeric">0.01</td><td class="numeric">68.8%</td><td class="numeric">4.21</td><td class="numeric">0.645</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-1</th><td class="numeric">0.01</td><td class="numeric">53.1%</td><td class="numeric">1.00</td><td class="numeric">0.521</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-2</th><td class="numeric">0.01</td><td class="numeric">58.2%</td><td class="numeric">2.00</td><td class="numeric">0.562</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-4</th><td class="numeric">0.01</td><td class="numeric">66.8%</td><td class="numeric">4.00</td><td class="numeric">0.628</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-8</th><td class="numeric">0.01</td><td class="numeric">73.4%</td><td class="numeric">8.00</td><td class="numeric">0.654</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">agreement-2</th><td class="numeric">0.01</td><td class="numeric">68.8%</td><td class="numeric">3.89</td><td class="numeric">0.649</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">confidence-0.67</th><td class="numeric">0.01</td><td class="numeric">71.9%</td><td class="numeric">4.66</td><td class="numeric">0.672</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">confidence-0.8</th><td class="numeric">0.01</td><td class="numeric">71.9%</td><td class="numeric">4.91</td><td class="numeric">0.670</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">confidence-1</th><td class="numeric">0.01</td><td class="numeric">71.9%</td><td class="numeric">4.98</td><td class="numeric">0.669</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">agreement-3</th><td class="numeric">0.01</td><td class="numeric">73.4%</td><td class="numeric">5.61</td><td class="numeric">0.678</td></tr><tr><td><span class="family-key family-offline-rl"><span aria-hidden="true"></span>Learned</span></td><th scope="row">BranchPilot λ=0.025</th><td class="numeric">0.025</td><td class="numeric">68.8%</td><td class="numeric">3.71</td><td class="numeric">0.595</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-1</th><td class="numeric">0.025</td><td class="numeric">53.1%</td><td class="numeric">1.00</td><td class="numeric">0.506</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-2</th><td class="numeric">0.025</td><td class="numeric">58.2%</td><td class="numeric">2.00</td><td class="numeric">0.532</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-4</th><td class="numeric">0.025</td><td class="numeric">66.8%</td><td class="numeric">4.00</td><td class="numeric">0.568</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-8</th><td class="numeric">0.025</td><td class="numeric">73.4%</td><td class="numeric">8.00</td><td class="numeric">0.534</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">agreement-2</th><td class="numeric">0.025</td><td class="numeric">68.8%</td><td class="numeric">3.89</td><td class="numeric">0.590</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">confidence-0.67</th><td class="numeric">0.025</td><td class="numeric">71.9%</td><td class="numeric">4.66</td><td class="numeric">0.602</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">confidence-0.8</th><td class="numeric">0.025</td><td class="numeric">71.9%</td><td class="numeric">4.91</td><td class="numeric">0.596</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">confidence-1</th><td class="numeric">0.025</td><td class="numeric">71.9%</td><td class="numeric">4.98</td><td class="numeric">0.594</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">agreement-3</th><td class="numeric">0.025</td><td class="numeric">73.4%</td><td class="numeric">5.61</td><td class="numeric">0.594</td></tr><tr><td><span class="family-key family-offline-rl"><span aria-hidden="true"></span>Learned</span></td><th scope="row">BranchPilot λ=0.05</th><td class="numeric">0.05</td><td class="numeric">63.7%</td><td class="numeric">2.74</td><td class="numeric">0.500</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-1</th><td class="numeric">0.05</td><td class="numeric">53.1%</td><td class="numeric">1.00</td><td class="numeric">0.481</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-2</th><td class="numeric">0.05</td><td class="numeric">58.2%</td><td class="numeric">2.00</td><td class="numeric">0.482</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-4</th><td class="numeric">0.05</td><td class="numeric">66.8%</td><td class="numeric">4.00</td><td class="numeric">0.468</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-8</th><td class="numeric">0.05</td><td class="numeric">73.4%</td><td class="numeric">8.00</td><td class="numeric">0.334</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">agreement-2</th><td class="numeric">0.05</td><td class="numeric">68.8%</td><td class="numeric">3.89</td><td class="numeric">0.493</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">confidence-0.67</th><td class="numeric">0.05</td><td class="numeric">71.9%</td><td class="numeric">4.66</td><td class="numeric">0.486</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">confidence-0.8</th><td class="numeric">0.05</td><td class="numeric">71.9%</td><td class="numeric">4.91</td><td class="numeric">0.473</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">confidence-1</th><td class="numeric">0.05</td><td class="numeric">71.9%</td><td class="numeric">4.98</td><td class="numeric">0.470</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">agreement-3</th><td class="numeric">0.05</td><td class="numeric">73.4%</td><td class="numeric">5.61</td><td class="numeric">0.454</td></tr><tr><td><span class="family-key family-offline-rl"><span aria-hidden="true"></span>Learned</span></td><th scope="row">BranchPilot λ=0.075</th><td class="numeric">0.075</td><td class="numeric">64.1%</td><td class="numeric">2.30</td><td class="numeric">0.468</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-1</th><td class="numeric">0.075</td><td class="numeric">53.1%</td><td class="numeric">1.00</td><td class="numeric">0.456</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-2</th><td class="numeric">0.075</td><td class="numeric">58.2%</td><td class="numeric">2.00</td><td class="numeric">0.432</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-4</th><td class="numeric">0.075</td><td class="numeric">66.8%</td><td class="numeric">4.00</td><td class="numeric">0.368</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-8</th><td class="numeric">0.075</td><td class="numeric">73.4%</td><td class="numeric">8.00</td><td class="numeric">0.134</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">agreement-2</th><td class="numeric">0.075</td><td class="numeric">68.8%</td><td class="numeric">3.89</td><td class="numeric">0.395</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">confidence-0.67</th><td class="numeric">0.075</td><td class="numeric">71.9%</td><td class="numeric">4.66</td><td class="numeric">0.369</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">confidence-0.8</th><td class="numeric">0.075</td><td class="numeric">71.9%</td><td class="numeric">4.91</td><td class="numeric">0.351</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">confidence-1</th><td class="numeric">0.075</td><td class="numeric">71.9%</td><td class="numeric">4.98</td><td class="numeric">0.346</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">agreement-3</th><td class="numeric">0.075</td><td class="numeric">73.4%</td><td class="numeric">5.61</td><td class="numeric">0.314</td></tr><tr><td><span class="family-key family-offline-rl"><span aria-hidden="true"></span>Learned</span></td><th scope="row">BranchPilot λ=0.1</th><td class="numeric">0.1</td><td class="numeric">63.3%</td><td class="numeric">1.92</td><td class="numeric">0.441</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-1</th><td class="numeric">0.1</td><td class="numeric">53.1%</td><td class="numeric">1.00</td><td class="numeric">0.431</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-2</th><td class="numeric">0.1</td><td class="numeric">58.2%</td><td class="numeric">2.00</td><td class="numeric">0.382</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-4</th><td class="numeric">0.1</td><td class="numeric">66.8%</td><td class="numeric">4.00</td><td class="numeric">0.268</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-8</th><td class="numeric">0.1</td><td class="numeric">73.4%</td><td class="numeric">8.00</td><td class="numeric">-0.066</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">agreement-2</th><td class="numeric">0.1</td><td class="numeric">68.8%</td><td class="numeric">3.89</td><td class="numeric">0.298</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">confidence-0.67</th><td class="numeric">0.1</td><td class="numeric">71.9%</td><td class="numeric">4.66</td><td class="numeric">0.253</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">confidence-0.8</th><td class="numeric">0.1</td><td class="numeric">71.9%</td><td class="numeric">4.91</td><td class="numeric">0.228</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">confidence-1</th><td class="numeric">0.1</td><td class="numeric">71.9%</td><td class="numeric">4.98</td><td class="numeric">0.221</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">agreement-3</th><td class="numeric">0.1</td><td class="numeric">73.4%</td><td class="numeric">5.61</td><td class="numeric">0.173</td></tr><tr><td><span class="family-key family-offline-rl"><span aria-hidden="true"></span>Learned</span></td><th scope="row">BranchPilot λ=0.15</th><td class="numeric">0.15</td><td class="numeric">60.2%</td><td class="numeric">1.60</td><td class="numeric">0.361</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-1</th><td class="numeric">0.15</td><td class="numeric">53.1%</td><td class="numeric">1.00</td><td class="numeric">0.381</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-2</th><td class="numeric">0.15</td><td class="numeric">58.2%</td><td class="numeric">2.00</td><td class="numeric">0.282</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-4</th><td class="numeric">0.15</td><td class="numeric">66.8%</td><td class="numeric">4.00</td><td class="numeric">0.068</td></tr><tr><td><span class="family-key family-fixed"><span aria-hidden="true"></span>Fixed</span></td><th scope="row">fixed-8</th><td class="numeric">0.15</td><td class="numeric">73.4%</td><td class="numeric">8.00</td><td class="numeric">-0.466</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">agreement-2</th><td class="numeric">0.15</td><td class="numeric">68.8%</td><td class="numeric">3.89</td><td class="numeric">0.103</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">confidence-0.67</th><td class="numeric">0.15</td><td class="numeric">71.9%</td><td class="numeric">4.66</td><td class="numeric">0.020</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">confidence-0.8</th><td class="numeric">0.15</td><td class="numeric">71.9%</td><td class="numeric">4.91</td><td class="numeric">-0.017</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">confidence-1</th><td class="numeric">0.15</td><td class="numeric">71.9%</td><td class="numeric">4.98</td><td class="numeric">-0.028</td></tr><tr><td><span class="family-key family-heuristic"><span aria-hidden="true"></span>Heuristic</span></td><th scope="row">agreement-3</th><td class="numeric">0.15</td><td class="numeric">73.4%</td><td class="numeric">5.61</td><td class="numeric">-0.107</td></tr></tbody>
+        </table>
+      </div>
+    </details>
+  </section>
+</main>
+<footer class="report-footer">
+  <span>BranchPilot benchmark artifact</span>
+  <span>Schema v1 · 15 unique policies · no external assets</span>
+</footer>
+</div>
+</body>
+</html>
