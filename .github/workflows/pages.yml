@@ -1,0 +1,35 @@
+name: Deploy benchmark report
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - name: Assemble static report
+        run: |
+          mkdir -p _site/assets
+          cp benchmarks/report.html _site/index.html
+          cp benchmarks/*.json _site/
+          cp assets/gsm8k-pareto.svg _site/assets/
+      - uses: actions/upload-pages-artifact@v3
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
