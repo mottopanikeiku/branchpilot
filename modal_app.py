@@ -7,6 +7,7 @@ from typing import Any
 import modal
 
 MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
+MODEL_REVISION = "989aa7980e4cf806f80c7fef2b1adb7bc71aa306"
 CACHE_PATH = "/root/.cache/huggingface"
 
 app = modal.App("branchpilot-rollouts")
@@ -16,8 +17,11 @@ image = (
         "nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04",
         add_python="3.12",
     )
+    .apt_install("gcc", "g++")
     .pip_install(
         "datasets==4.0.0",
+        "transformers==4.55.2",
+        "tokenizers==0.21.1",
         "vllm==0.10.2",
     )
     .add_local_python_source("branchpilot")
@@ -49,6 +53,8 @@ def collect_rollouts(
 
     model = LLM(
         model=MODEL,
+        revision=MODEL_REVISION,
+        tokenizer_revision=MODEL_REVISION,
         download_dir=CACHE_PATH,
         dtype="half",
         enable_prefix_caching=True,
@@ -127,6 +133,7 @@ def collect_rollouts(
                         "split": split,
                         "index": index,
                         "model": MODEL,
+                        "model_revision": MODEL_REVISION,
                         "temperature": sampling.temperature,
                         "seed": seed,
                     },
@@ -143,6 +150,7 @@ def collect_rollouts(
         "test": test,
         "manifest": {
             "model": MODEL,
+            "model_revision": MODEL_REVISION,
             "train_records": train_size,
             "test_records": test_size,
             "samples_per_record": max_samples,
