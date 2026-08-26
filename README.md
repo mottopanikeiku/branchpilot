@@ -1,66 +1,280 @@
-<div align="center">
-
 # BranchPilot
 
-**A lightweight cost-conditioned controller that stops LLM self-consistency at the prompt-specific point of diminishing returns.**
+**Adaptive inference control, prompt by prompt.**
 
-[![CI](https://github.com/mottopanikeiku/branchpilot/actions/workflows/ci.yml/badge.svg)](https://github.com/mottopanikeiku/branchpilot/actions/workflows/ci.yml)
-[![Live report](https://img.shields.io/badge/Live-Benchmark%20Report-C4B5FD)](https://mottopanikeiku.github.io/branchpilot/)
-[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB)](https://www.python.org/)
-[![Modal](https://img.shields.io/badge/GPU-Modal%20L4-7C3AED)](https://modal.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-22C55E.svg)](LICENSE)
+BranchPilot is a deployable control plane for sequential LLM sampling. After every completed sample it **observes** the parsed answer and usage, **decides** with a fixed, transparent, or learned strategy, then issues exactly one more request—or **stops**. The same bounded runtime works with local callbacks, OpenAI-compatible servers, a text-only gateway, and `its_hub`.
 
-<img src="assets/gsm8k-v2-pareto.svg" alt="BranchPilot canonical held-out GSM8K accuracy versus average samples with 95% intervals" width="100%">
+[Zero-GPU quick success](#zero-gpu-quick-success) · [Deployable strategies](#deployable-strategies) · [Gateway](#openai-compatible-gateway) · [Canonical v0.2 evidence · FAIL](https://mottopanikeiku.github.io/branchpilot/evidence/v0.2/)
 
-</div>
+<img src="assets/decision-flight-recorder.svg" alt="Decision flight recorder: confidence-0.85 observes two matching answers, stops after 2 of 8 allowed samples, and marks requests 3 through 8 not issued." width="100%">
 
-Most inference-time scaling systems pick one global sample count: easy prompts are overthought; hard prompts are abandoned too early. BranchPilot turns that systems decision into an observable finite-horizon stopping problem. A single universal Q-network watches agreement, parse coverage, answer entropy, sequence confidence, completion length, prompt structure, remaining horizon, and a user-selected cost $\lambda$. It chooses **STOP** or **CONTINUE** after every observed sample.
+The trace is deliberately literal: request 1 is observed, request 2 is observed, confidence reaches 1.00, and the confidence-0.85 strategy stops. Requests 3–8 are labeled **NOT ISSUED**. BranchPilot controls marginal sample requests; it does not turn sample count into a claim about latency, GPU time, energy, or dollars.
 
-Complete offline trajectories expose the STOP reward and next prefix at every step. BranchPilot solves each logged trajectory exactly by backward induction, then distills those counterfactual Q-values into one cost-conditioned policy. Deployment uses a Torch-free NumPy runtime and bounded, non-executable Safetensors artifacts.
+## Zero-GPU quick success
 
-## Canonical v0.2 result: the protocol failed
+This source quickstart uses synthetic correlated trajectories and CPU training. It downloads no model and needs no GPU. The final command replays the exported heuristic plan through the same `PilotSession` used by learned policies:
 
-The locked evaluation uses **Qwen2.5-1.5B-Instruct**, 1,600 controller-training prompts, 400 validation prompts, and the complete **1,319-example official GSM8K test**, with 8 samples per prompt. Comparator names were selected on validation and committed before test. Every point uses 10,000 paired prompt-bootstrap resamples.
+```bash
+git clone https://github.com/mottopanikeiku/branchpilot
+cd branchpilot
+uv sync --extra train
+uv run branchpilot quickstart
 
-**The prespecified success rule did not pass.** Utility-delta 95% lower bounds at the three primary costs were $-0.0152$, $-0.0422$, and $-0.0491$; the protocol required at least two to be strictly positive and the third nonnegative. BranchPilot advances the static fixed-count frontier between roughly 1.5 and 3 samples, but simple adaptive agreement/confidence rules remain stronger under the frozen utility comparison.
+uv run branchpilot plan \
+  --benchmark artifacts/quickstart/benchmark.json \
+  --sample-budget 3.5 \
+  --family heuristic \
+  --json-output artifacts/quickstart/plan.json
+
+uv run branchpilot demo \
+  --data artifacts/quickstart/test.jsonl \
+  --plan artifacts/quickstart/plan.json \
+  --index 7
+```
+
+`quickstart` writes synthetic train/test trajectories, a Safetensors policy, exhaustive fixed/heuristic/learned validation rows, and a standalone report under `artifacts/quickstart/`. `demo --plan` prints the selected strategy, every observed-prefix decision, the stopping point, and how many allowed requests were never issued.
+
+## The control loop
+
+```text
+prompt
+  └─ request one n=1 sample
+       └─ observe parsed answer + completion usage
+            └─ strategy decides from the observed prefix
+                 ├─ CONTINUE → request exactly one more sample
+                 └─ STOP     → return the selected observed response
+```
+
+A strategy never receives a gold answer or a future sample at deployment. The horizon is hard-bounded. `PilotSession.run` and `run_async` call the sampler once per CONTINUE decision and never after STOP.
+
+## Deployable strategies
+
+All four implementations satisfy the same `StoppingStrategy` interface and can be loaded from strict JSON deployment plans.
+
+| Strategy | Decision rule | Best fit |
+|---|---|---|
+| `FixedStrategy` | Stop after an operator-selected count | predictable default and baseline |
+| `VoteConfidenceStrategy` | Stop when leading vote share reaches a threshold after a minimum count | inspectable answer-consensus control |
+| `ConsecutiveAgreementStrategy` | Stop after a run of identical parsed answers | inspectable stability control |
+| `BranchPilotPolicy` | Compare learned STOP/CONTINUE values at a declared marginal sample cost $\lambda$ | validation-supported learned control |
+
+Built-in specs are small, executable-code-free JSON:
+
+```json
+{"type":"fixed","samples":2,"max_samples":8}
+{"type":"vote_confidence","threshold":0.85,"minimum":2,"max_samples":8}
+{"type":"consecutive_agreement","streak":2,"max_samples":8}
+```
+
+Learned deployments use a bounded, non-executable Safetensors artifact. Their plan records the policy-relative path, SHA-256 digest, and a $\lambda$ inside that policy's trained marginal-sample-cost interval. Loading fails closed on schema, shape, dtype, finiteness, size, file type, or digest mismatch.
+
+### Choose from validation with `plan`
+
+`branchpilot plan` reads deployable validation rows across **learned**, **fixed**, and **heuristic** families. By default a row is feasible only when its upper 95% average-sample bound meets the requested budget. Among feasible rows it chooses the highest measured validation accuracy, then the lower measured sample count; if none is feasible it returns the minimum-sample row with `budget_satisfied: false`.
+
+Inspect the cross-strategy choice without exporting it:
+
+```bash
+uv run branchpilot plan \
+  --benchmark artifacts/quickstart/benchmark.json \
+  --sample-budget 3.5
+```
+
+Export a built-in strategy by limiting the rerun to its family and omitting `--policy`:
+
+```bash
+uv run branchpilot plan \
+  --benchmark artifacts/quickstart/benchmark.json \
+  --sample-budget 3.5 \
+  --family heuristic \
+  --json-output artifacts/quickstart/plan.json
+```
+
+A learned export **requires** the matching policy so the plan can bind its content digest and relative path:
+
+```bash
+uv run branchpilot plan \
+  --benchmark artifacts/quickstart/benchmark.json \
+  --sample-budget 3.5 \
+  --family learned \
+  --policy artifacts/quickstart/policy.safetensors \
+  --json-output artifacts/quickstart/learned-plan.json
+```
+
+`--policy` is valid only when the selected family is learned. `--point-estimate` opts out of upper-bound feasibility; `--family` may be repeated when comparing a subset.
+
+## OpenAI-compatible gateway
+
+`branchpilot-gateway` is a text-only, non-streaming OpenAI-compatible control surface. The operator config binds public model aliases to upstreams, immutable decoding options, hard request/session limits, answer extraction, and a deployment plan. [`examples/gateway.json`](examples/gateway.json) routes `math-local` to a vLLM server at `127.0.0.1:8001` using [`examples/gateway-plan.json`](examples/gateway-plan.json).
+
+From a source checkout, set the two secret environment variables named by the config:
+
+```bash
+export BRANCHPILOT_GATEWAY_KEY=client-secret
+export BRANCHPILOT_UPSTREAM_KEY=upstream-secret
+```
+
+Run vLLM in its own environment and process. vLLM is an upstream boundary, not part of the BranchPilot gateway extra:
+
+```bash
+vllm serve Qwen/Qwen2.5-1.5B-Instruct \
+  --host 127.0.0.1 \
+  --port 8001 \
+  --api-key "$BRANCHPILOT_UPSTREAM_KEY"
+```
+
+In a second process, install and start the gateway from this source tree:
+
+```bash
+uv sync --extra gateway
+uv run branchpilot-gateway \
+  --config examples/gateway.json \
+  --host 127.0.0.1 \
+  --port 8000
+```
+
+A standard OpenAI client works unchanged. Use the raw-response wrapper only when the BranchPilot result headers are needed:
+
+```python
+import os
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:8000/v1",
+    api_key=os.environ["BRANCHPILOT_GATEWAY_KEY"],
+)
+raw = client.chat.completions.with_raw_response.create(
+    model="math-local",
+    messages=[{"role": "user", "content": "What is 17 + 25?"}],
+)
+completion = raw.parse()
+print(completion.choices[0].message.content)
+print(raw.headers["x-branchpilot-samples"])
+print(raw.headers["x-branchpilot-strategy"])
+print(raw.headers["x-branchpilot-selection"])
+```
+
+The same response and headers are visible with curl:
+
+```bash
+curl -i http://127.0.0.1:8000/v1/chat/completions \
+  -H "Authorization: Bearer $BRANCHPILOT_GATEWAY_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"math-local","messages":[{"role":"user","content":"What is 17 + 25?"}]}'
+```
+
+Successful responses include `x-request-id`, `x-branchpilot-samples`, `x-branchpilot-strategy`, and `x-branchpilot-selection`. The body is a standard chat completion whose usage aggregates the sequential upstream requests. The gateway makes one upstream `n=1` request per CONTINUE step; it does not retry or estimate missing usage.
+
+## Installation from source
+
+BranchPilot requires **Python 3.10 or newer**. This repository is source-first; the commands below make no package-index availability claim.
+
+| Channel | Source command | Adds |
+|---|---|---|
+| Core runtime | `uv sync` | NumPy runtime, strategies, plans, Safetensors loading |
+| Training | `uv sync --extra train` | optional PyTorch fitting |
+| Gateway | `uv sync --extra gateway` | FastAPI, OpenAI client, HTTP transport, Uvicorn |
+| `its_hub` | `uv sync --extra its-hub` | `its_hub` adapter; **Python 3.11+** required by the integration dependency |
+| Direct OpenAI adapter | `uv sync --extra openai` | OpenAI SDK without the gateway server |
+
+Extras compose, for example `uv sync --extra train --extra gateway`. Importing `branchpilot` core does not import provider SDKs, gateway dependencies, PyTorch, or `its_hub`.
+
+## Live control APIs
+
+### Core callback loop
+
+The core package is model-server agnostic. Feed one canonical observation at a time:
+
+```python
+from branchpilot import PilotSession, Sample, VoteConfidenceStrategy
+
+strategy = VoteConfidenceStrategy(threshold=0.85, minimum=2, max_samples=8)
+session = PilotSession(strategy, "What is 17 + 25?", cost=0.0, max_samples=8)
+
+while session.should_continue:
+    output = generate_one_sample()  # your local server or provider call
+    session.observe(
+        Sample(
+            text=output.text,
+            answer=parse_answer(output.text),
+            token_count=output.token_count,
+            mean_logprob=output.mean_logprob,
+        )
+    )
+
+result = session.result()
+print(result.answer, result.sample_count, result.completion_tokens)
+```
+
+For a learned policy, replace the strategy construction with `BranchPilotPolicy.load("policy.safetensors")` and pass a $\lambda$ inside its trained marginal-sample-cost interval.
+
+### Sequential OpenAI adapter
+
+The async adapter keeps the control loop in-process without coupling core to the provider SDK:
+
+```python
+from openai import AsyncOpenAI
+from branchpilot.answers import extract_answer
+from branchpilot.integrations import run_openai
+
+result = await run_openai(
+    strategy,
+    AsyncOpenAI(base_url="http://localhost:8001/v1", api_key="local"),
+    model="Qwen/Qwen2.5-1.5B-Instruct",
+    messages=[{"role": "user", "content": question}],
+    extractor=extract_answer,
+    question=question,
+    cost=0.0,
+    max_samples=8,
+    request_options={"temperature": 0.7, "logprobs": True},
+)
+```
+
+The adapter requires real completion-token usage, preserves missing log-probabilities as missing, rejects truncated answers, and performs no retries. It never infers the marginal sample cost $\lambda$ from provider pricing.
+
+### `its_hub` adapter
+
+`branchpilot.integrations.its_hub.BranchPilotAlgorithm` exposes any observed-prefix BranchPilot strategy as an `its_hub` scaling algorithm. It preserves the sequential horizon, returns all observed responses plus the selected response, and never launches work after STOP.
+
+## Evidence: canonical v0.2 learned-policy criterion — FAIL
+
+**[Canonical v0.2 evidence · FAIL](https://mottopanikeiku.github.io/branchpilot/evidence/v0.2/)**
+
+The locked evaluation used **Qwen2.5-1.5B-Instruct**, 1,600 controller-training prompts, 400 validation prompts, and the complete **1,319-example official GSM8K test**, with 8 samples per prompt. Comparator names were selected on validation and committed before test. Every point uses 10,000 paired prompt-bootstrap resamples.
+
+**The prespecified learned-policy success rule did not pass.** Utility-delta 95% lower bounds at the three primary marginal sample costs were $-0.0152$, $-0.0422$, and $-0.0491$; the protocol required at least two to be strictly positive and the third nonnegative. The learned policy advanced the fixed-count sample frontier at some operating points, but the frozen adaptive agreement/confidence comparators were stronger under this single-model, single-task utility comparison.
 
 | Policy | Accuracy | Avg. samples | What the official test shows |
 |---|---:|---:|---|
-| fixed-1 | 68.8% | 1.00 | minimum-compute reference |
-| BranchPilot $\lambda=0.15$ | 72.5% | 1.52 | learned static-frontier point |
-| fixed-2 | 71.9% | 2.00 | static reference |
-| BranchPilot $\lambda=0.05$ | 75.1% | 2.49 | fewer samples and higher accuracy than fixed-3 |
-| fixed-3 | 74.5% | 3.00 | static reference |
-| BranchPilot $\lambda=0.025$ | 76.2% | 2.98 | +1.7 points versus fixed-3 at similar compute |
-| agreement-2 | 78.8% | 3.23 | frozen low-cost adaptive comparator |
+| fixed-1 | 68.8% | 1.00 | minimum-sample reference |
+| BranchPilot $\lambda=0.15$ | 72.5% | 1.52 | learned fixed-frontier point |
+| fixed-2 | 71.9% | 2.00 | fixed reference |
+| BranchPilot $\lambda=0.05$ | 75.1% | 2.49 | measured above fixed-3 accuracy with fewer average samples |
+| fixed-3 | 74.5% | 3.00 | fixed reference |
+| BranchPilot $\lambda=0.025$ | 76.2% | 2.98 | +1.7 accuracy points versus fixed-3 at similar sample count |
+| agreement-2 | 78.8% | 3.23 | stronger frozen adaptive comparator at low marginal sample cost |
 | fixed-8 | 80.1% | 8.00 | maximum-sample ceiling |
 
-This is the result, not a buried caveat. The [interactive evidence report](benchmarks/report-v2.html) renders the FAIL verdict, exact rule, primary/sensitivity costs, paired intervals, stop histograms, provenance chain, and every declared limitation. Machine evidence: [test JSON](benchmarks/gsm8k-v2.json), [validation freeze](benchmarks/gsm8k-v2-validation.json), [generation manifest](benchmarks/manifest-v2.json), [protocol](benchmarks/protocol.json), and [detached checksums](benchmarks/checksums-v2.txt). The pinned L4 run generated 6,352,308 completion tokens in 2,565.6 measured generation-seconds at 2,476 tokens/s.
+This FAIL is evidence about the canonical learned strategy, not a claim that the fixed, confidence, or consecutive-agreement control plane is broken. It remains prominent so adopters can choose strategies from validation instead of treating learned control as the default.
 
-## Legacy exploratory v0.1 result
+**Frozen HTML and checksums:** [standalone report](benchmarks/report-v2.html) · [detached checksums](benchmarks/checksums-v2.txt)
 
-The original v0.1 benchmark was an exploratory point-estimate study: **Qwen2.5-1.5B-Instruct**, 8 stochastic samples per prompt, 512 controller-training trajectories, and 256 controller-held-out trajectories drawn from GSM8K train. It used one generation seed, one controller seed, a sparse baseline grid, no confidence intervals, and a permissive parser that could accept a final number from token-limit-truncated reasoning. It is retained for provenance, not promoted as v0.2 evidence.
+**Machine evidence:** [test JSON](benchmarks/gsm8k-v2.json) · [validation freeze](benchmarks/gsm8k-v2-validation.json) · [generation manifest](benchmarks/manifest-v2.json) · [protocol](benchmarks/protocol.json)
 
-| Policy | Accuracy | Avg. samples | Comparison |
-|---|---:|---:|---|
-| fixed-2 | 58.2% | 2.00 | static baseline |
-| **BranchPilot $\lambda=0.10$** | **63.3%** | **1.92** | **+5.1 points with less compute** |
-| fixed-4 | 66.8% | 4.00 | static baseline |
-| **BranchPilot $\lambda=0.025$** | **68.8%** | **3.71** | **+2.0 points with 7.1% fewer samples** |
-| fixed-8 | 73.4% | 8.00 | maximum-compute ceiling |
+The exploratory v0.1 point-estimate study is retained only for provenance: [frozen report](benchmarks/report.html), [aggregate JSON](benchmarks/gsm8k.json), and [manifest](benchmarks/manifest.json).
 
-The observed v0.1 utility $U=\text{accuracy}-\lambda\times\text{samples}$ favored the learned controller over the listed fixed-count and agreement/confidence baselines at $\lambda\in\{0.05,0.075,0.10\}$. This is not yet a confirmatory or generality claim. Full aggregate rows live in [`benchmarks/gsm8k.json`](benchmarks/gsm8k.json), with recorded provenance in [`benchmarks/manifest.json`](benchmarks/manifest.json) and the standalone report in [`benchmarks/report.html`](benchmarks/report.html).
+## How the learned policy works
 
-## How it works
+Most fixed-sampling systems choose one count for every prompt. The learned BranchPilot strategy instead models a finite-horizon STOP/CONTINUE decision from each observed prefix.
 
 ```mermaid
 flowchart LR
-    P[Prompt] --> M[LLM sample]
+    P[Prompt] --> M[One LLM sample]
     M --> A[Parse + aggregate answers]
-    A --> S[15-D observable state]
-    S --> Q[Cost-conditioned Q-network]
+    A --> S[Observable prefix state]
+    S --> Q[Marginal-sample-cost-conditioned Q-policy]
     Q -->|CONTINUE| M
-    Q -->|STOP| O[Majority answer]
+    Q -->|STOP| O[Selected observed answer]
 
     T[Logged complete trajectories] --> R[Counterfactual prefix rewards]
     R --> D[Exact backward induction]
@@ -78,83 +292,27 @@ $$
 Q(s_t,\mathrm{CONTINUE};\lambda)=-\lambda+\max_a Q(s_{t+1},a;\lambda)
 $$
 
-The 15 observable features include vote share and margin, normalized answer entropy, diversity, parse and log-probability coverage, finite sequence-confidence statistics, latest-sample agreement, completion-length statistics, prompt token/character length, numeric density, and horizon progress. Three conditioning features add $\lambda$, normalized remaining horizon, and their interaction. One network covers the declared training-cost interval; inference applies isotonic advantage projection so higher cost cannot make a shared prefix more likely to continue.
+Here $\lambda$ is the objective's **marginal cost of one additional sample**. It is not a dollar, latency, GPU-time, energy, or token conversion.
 
-Training regresses exact finite-horizon Q-targets with Huber loss, deterministic seeds, gradient clipping, and explicit terminal-action masking. PyTorch is isolated to the optional training environment. Deployment and evaluation need only NumPy plus Safetensors; policy artifacts are non-pickle, strictly schema/shape/dtype/finiteness checked, size-bounded, and written atomically.
+Complete offline trajectories expose the STOP reward and next prefix at every step. BranchPilot solves each logged trajectory by backward induction, then distills those targets into one policy over a declared $\lambda$ interval. Observable features cover vote share and margin, normalized answer entropy, diversity, parse and log-probability coverage, finite sequence-confidence statistics, latest-sample agreement, completion-length statistics, prompt structure, and remaining horizon. Isotonic advantage projection prevents a higher marginal sample cost from making a shared prefix more likely to continue.
 
-## Five-minute local demo
+Training uses Huber loss, deterministic seeds, gradient clipping, and explicit terminal-action masking. PyTorch is isolated to the optional training environment. Deployment and evaluation use NumPy plus Safetensors.
 
-No model download or GPU required. The quickstart builds correlated reasoning trajectories, trains the controller with the `train` extra, evaluates fixed/heuristic baselines, renders the Pareto report, and prints a Q-value trace.
+## Scope, limitations, and positioning
 
-```bash
-git clone https://github.com/mottopanikeiku/branchpilot
-cd branchpilot
-uv sync --extra dev
-uv run branchpilot quickstart
-python -m webbrowser "file://$PWD/artifacts/quickstart/report.html"
-```
+- Offline learning needs labeled complete trajectories; deployment receives neither gold labels nor future samples. Fixed and heuristic strategies do not require policy training.
+- Every selected strategy must be validated for its model, decoding configuration, task distribution, answer extractor, sample horizon, and serving environment. Distribution shift must be measured before deployment.
+- The learned objective prices an additional **sample** with $\lambda$. Samples and completion tokens are reported separately; neither is silently relabeled as latency, GPU-seconds, energy, or dollars.
+- Batched pre-generated response banks support offline counterfactual evaluation. Live sequential `n=1` request behavior, latency, and infrastructure effects must be measured in the target serving system.
+- A STOP decision can prevent later marginal requests from being issued; it cannot reclaim work an upstream server already launched or batched speculatively.
+- This project controls self-consistency sampling. It does not modify model weights, own model routing/tree search/layer exit, or claim a new language-model benchmark score.
+- The canonical v0.2 result covers one model, one task, and one learned-policy protocol. It is not evidence of general learned-policy superiority; its prespecified criterion failed.
 
-Inspect a specific decision path:
+BranchPilot does **not** claim the first learned, RL, MDP, or marginal-sample-cost-aware adaptive sampler. Direct prior systems include [Adaptive-Consistency](https://arxiv.org/abs/2305.11860), [Early-Stopping Self-Consistency](https://arxiv.org/abs/2401.10480), and [RL-Guided Adaptive Sampling](https://arxiv.org/abs/2606.03102). BranchPilot's narrower contribution is an adoptable control plane: interchangeable transparent and learned strategies, exact observed-prefix request discipline, strict deployment plans, bounded non-executable learned artifacts, OpenAI-compatible serving, and evidence/provenance tooling designed to fail closed.
 
-```bash
-uv run branchpilot demo \
-  --data artifacts/quickstart/test.jsonl \
-  --policy artifacts/quickstart/policy.safetensors \
-  --cost 0.05 --index 7
-```
+## Reproduce the frozen Modal benchmark
 
-## Live inference API
-
-Offline labels train the policy; deployment never receives a gold answer or future sample. Feed one canonicalized observation at a time and stop launching model requests as soon as the policy stops:
-
-```python
-from branchpilot import BranchPilotPolicy, Sample
-
-policy = BranchPilotPolicy.load("policy.safetensors")
-session = policy.start("What is 17 + 25?", cost=0.05, max_samples=8)
-
-while session.should_continue:
-    output = generate_one_sample()  # your vLLM, SGLang, or API call
-    session.observe(
-        Sample(
-            text=output.text,
-            answer=parse_answer(output.text),
-            token_count=output.token_count,
-            mean_logprob=output.mean_logprob,
-        )
-    )
-
-result = session.result()
-print(result.answer, result.sample_count, result.completion_tokens)
-```
-
-`PilotSession.run` and `run_async` provide callback loops with the same invariant: the sampler is called exactly once per observed decision and never after STOP.
-
-OpenAI-compatible backends use the same loop without coupling the core package to a provider SDK:
-
-```python
-from openai import AsyncOpenAI
-from branchpilot.answers import extract_answer
-from branchpilot.integrations import run_openai
-
-result = await run_openai(
-    policy,
-    AsyncOpenAI(base_url="http://localhost:8000/v1", api_key="local"),
-    model="Qwen/Qwen2.5-1.5B-Instruct",
-    messages=[{"role": "user", "content": question}],
-    extractor=extract_answer,
-    question=question,
-    cost=0.05,
-    max_samples=8,
-    request_options={"temperature": 0.7, "logprobs": True},
-)
-```
-
-Install the optional client with `uv sync --extra openai`. The adapter requires real completion-token usage, preserves missing log-probabilities as missing, rejects truncated answers, performs no retries or cost guessing, and issues exactly one `n=1` non-streaming request per CONTINUE step.
-
-## Run the frozen Modal benchmark
-
-[`benchmarks/protocol.json`](benchmarks/protocol.json) fixes the source/model revisions and hashes, immutable vLLM image digest, split sizes, sample bank, controller, baseline grid, bootstrap, success rule, and limitations before canonical generation. Collection downloads the original GSM8K JSONL at a pinned commit and verifies predeclared hashes, resolves the pinned model into a fresh ephemeral cache, inventories every model/tokenizer file and installed package, captures clean source hashes before dispatch, and publishes the three banks plus manifest as one atomic hash-bound directory.
+[`benchmarks/protocol.json`](benchmarks/protocol.json) fixes source/model revisions and hashes, the immutable vLLM image digest, split sizes, sample bank, controller, baseline grid, bootstrap, success rule, and limitations before canonical generation. The reproduction below is intentionally later than the deployable product path; it regenerates research evidence rather than starting the gateway.
 
 ```bash
 uv sync --extra dev --extra modal
@@ -185,7 +343,7 @@ uv run branchpilot train \
   --protocol benchmarks/protocol.json \
   --manifest benchmarks/manifest-v2.json
 
-# Select comparators on validation; bind names to data, policy, protocol, and benchmark hashes.
+# Select comparators on validation and bind them to the frozen inputs.
 uv run branchpilot evaluate \
   --data artifacts/gsm8k-v2/validation.jsonl \
   --policy artifacts/gsm8k-v2/policy.safetensors \
@@ -197,13 +355,6 @@ uv run branchpilot evaluate \
 
 # Commit protocol + manifest + validation benchmark + selection before test evaluation.
 
-# Turn an average serving budget into a validation-measured λ.
-uv run branchpilot plan \
-  --benchmark benchmarks/gsm8k-v2-validation.json \
-  --sample-budget 3.0 \
-  --json-output artifacts/gsm8k-v2/operating-point.json
-
-# Evaluate the committed policy/comparator binding once on official test.
 uv run branchpilot evaluate \
   --data artifacts/gsm8k-v2/test.jsonl \
   --policy artifacts/gsm8k-v2/policy.safetensors \
@@ -216,68 +367,68 @@ uv run branchpilot evaluate \
   --html benchmarks/report-v2.html
 ```
 
-The report publishes all fixed counts 1–8, complete confidence/agreement grids, retained prompt-paired outcomes, bootstrap intervals, the validation-selection chain, primary-versus-sensitivity costs, exact pass/fail rule, source/data/policy/protocol hashes, and every declared limitation. Results are published unchanged whether the prespecified rule passes or fails.
+The report publishes every fixed count 1–8, the complete confidence/agreement grids, learned rows, retained prompt-paired outcomes, bootstrap intervals, stop histograms, validation-selection chain, primary and sensitivity marginal sample costs, exact pass/fail rule, source/data/policy/protocol hashes, and declared limitations. Results remain unchanged whether the rule passes or fails.
 
-## CLI
+## CLI reference
 
 | Command | Purpose |
 |---|---|
-| `branchpilot quickstart` | Run the complete zero-GPU simulator → train → benchmark → report pipeline |
+| `branchpilot quickstart` | Run the zero-GPU synthetic → train → benchmark → report pipeline |
 | `branchpilot synthetic` | Generate deterministic correlated reasoning trajectories |
 | `branchpilot split` | Create seeded, fingerprinted, verified-disjoint data splits |
 | `branchpilot audit` | Validate identity disjointness and profile parse/logprob/token coverage |
 | `branchpilot train` | Fit exact backward Q-targets and save a safe policy artifact |
-| `branchpilot evaluate` | Bootstrap exhaustive baselines; freeze or consume validation comparators |
-| `branchpilot report` | Deterministically render standalone HTML/SVG evidence from canonical JSON |
-| `branchpilot plan` | Select a conservative validation-measured λ for an average sample budget |
-| `branchpilot demo` | Print every Q-value and STOP/CONTINUE action for one trajectory |
+| `branchpilot evaluate` | Bootstrap exhaustive learned/fixed/heuristic rows; freeze or consume validation comparators |
+| `branchpilot report` | Render standalone HTML/SVG evidence from benchmark JSON |
+| `branchpilot plan` | Choose a deployable learned/fixed/heuristic validation row for an average sample budget |
+| `branchpilot demo` | Replay a policy or plan as a decision flight recorder |
+| `branchpilot-gateway` | Serve a configured plan through a text-only OpenAI-compatible API |
 
-Run `uv run branchpilot <command> --help` for all controls.
+Run `uv run branchpilot <command> --help` or `uv run branchpilot-gateway --help` for exact controls.
 
 ## Data contract
 
-BranchPilot is model-server agnostic. A JSONL trajectory needs a prompt, canonical gold answer, and one or more samples:
+A JSONL trajectory contains a prompt, canonical gold answer, and one or more complete sample observations:
 
 ```json
 {"schema_version":2,"uid":"gsm8k-train-0","question":"...","gold":"72","samples":[{"text":"... #### 72","answer":"72","token_count":94,"mean_logprob":-0.31,"finish_reason":"stop","parse_status":"parsed"}],"prompt_tokens":81,"metadata":{"model":"Qwen/Qwen2.5-1.5B-Instruct"}}
 ```
 
-`extract_answer` is strict by default: it accepts complete `####`, XML, or LaTeX-boxed final answers and canonicalizes comma, decimal, signed, percentage, and fractional numeric forms. The frozen Modal collector separately records `parsed_explicit` and `parsed_fallback`: a last-number fallback is allowed only after the engine reports a completed response, never after token-limit truncation. Unparsed samples remain distinct and cannot manufacture false consensus.
+`extract_answer` is strict by default. It accepts complete `####`, XML, or LaTeX-boxed final answers and canonicalizes comma, decimal, signed, percentage, and fractional numeric forms. The frozen Modal collector separately records `parsed_explicit` and `parsed_fallback`: last-number fallback is allowed only after the engine reports a completed response, never after token-limit truncation. Unparsed samples remain distinct and cannot manufacture false consensus.
 
 ## Repository map
 
 ```text
 src/branchpilot/
-  answers.py      strict answer extraction and numeric canonicalization
-  features.py     offline/live prefix aggregation and 15-D state
-  policy.py       Torch-free NumPy inference and safe Safetensors artifacts
-  runtime.py      label-free sync/async incremental inference sessions
-  training.py     exact backward Q-targets and optional PyTorch fitting
-  evaluate.py     exhaustive baselines, paired bootstrap, retained outcomes
-  calibration.py  validation-based average-budget operating-point selection
-  integrity.py    canonical fingerprints, overlap checks, dataset profiles
-  provenance.py   frozen protocol and byte-exact manifest verification
-  report.py       interactive dependency-free HTML + accessible SVG evidence
-  artifacts.py    atomic writes, hashes, and output alias checks
-  integrations/   request-exact OpenAI-compatible async sampling
-  synthetic.py    zero-GPU correlated reasoning environment
-  cli.py          end-to-end command interface
-modal_app.py       pinned vLLM rollout collection on Modal L4
-benchmarks/        frozen protocol, complete metrics, provenance, offline report
-tests/             behavioral contracts and edge-case coverage
+  strategies.py    fixed, vote-confidence, consecutive-agreement interface
+  deployment.py    strict plans; built-in specs; hash-bound learned loading
+  calibration.py   cross-family validation selection for sample budgets
+  runtime.py       label-free sync/async sequential inference sessions
+  policy.py        Torch-free NumPy policy and safe Safetensors artifacts
+  training.py      exact backward Q-targets and optional PyTorch fitting
+  features.py      offline/live observed-prefix aggregation and state
+  answers.py       strict answer extraction and numeric canonicalization
+  evaluate.py      exhaustive learned/fixed/heuristic rows and paired bootstrap
+  gateway/
+    config.py      environment-bound routes, limits, plans, and options
+    upstream.py    request-exact sequential OpenAI upstream client
+    app.py         text-only OpenAI-compatible control-plane API
+    cli.py         branchpilot-gateway process entry point
+  integrations/
+    openai.py      in-process sequential OpenAI adapter
+    its_hub.py     BranchPilotAlgorithm for its_hub scaling workflows
+  integrity.py     fingerprints, overlap checks, and dataset profiles
+  provenance.py    frozen protocol and byte-exact manifest verification
+  report.py        dependency-free HTML and accessible SVG evidence
+  artifacts.py     atomic writes, hashes, and output alias checks
+  synthetic.py     zero-GPU correlated reasoning environment
+  cli.py           end-to-end command interface
+examples/           gateway config and deployable heuristic plan
+modal_app.py        pinned vLLM rollout collection on Modal L4
+benchmarks/         frozen protocol, complete metrics, checksums, offline reports
+assets/             product landing, flight recorder, and evidence figures
+tests/              behavioral contracts and edge-case coverage
 ```
-
-## Positioning
-
-BranchPilot does **not** claim the first learned, RL, MDP, or cost-aware adaptive sampler. Direct prior systems include [Adaptive-Consistency](https://arxiv.org/abs/2305.11860), [Early-Stopping Self-Consistency](https://arxiv.org/abs/2401.10480), and 2026's [RL-Guided Adaptive Sampling](https://arxiv.org/abs/2606.03102). BranchPilot's narrower contribution is a deployable control plane: one cost-conditioned policy across a declared interval, exact reuse of every logged prefix/action counterfactual, richer black-box observations, bounded non-executable artifacts, a label-free live session, and evidence/provenance tooling designed to fail closed.
-
-## Scope and limitations
-
-- Offline training needs labeled complete trajectories; deployment receives neither gold labels nor future samples.
-- A policy is calibrated to one model, decoding configuration, task distribution, feature schema, cost model, horizon, and answer aggregator. Distribution shift must be measured before deployment.
-- The current objective prices additional sample count. Samples are reported separately from completion tokens; neither is described as latency, GPU-seconds, energy, or dollars.
-- Batched pre-generated response banks are an offline counterfactual. Live `n=1` sequential serving savings and latency must be measured independently.
-- This project controls self-consistency sampling; it does not modify model weights, own model routing/tree search/layer exit, or claim a new language-model benchmark score.
 
 ## License
 

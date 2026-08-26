@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="1080" viewBox="0 0 600 810" role="img" aria-labelledby="flight-title flight-desc">
+  <title id="flight-title">Decision flight recorder: confidence-0.85 stops after two of eight samples</title>
+  <desc id="flight-desc">Two sequential requests return the same answer. After the second observation, vote confidence is one point zero zero, above the zero point eight five threshold, so the controller stops. Requests three through eight are marked not issued with dashed, crossed boxes.</desc>
+  <defs>
+    <style>
+      :root {
+        --canvas: #090b10;
+        --surface: #10141c;
+        --raised: #171c26;
+        --rule: #303846;
+        --rule-strong: #4a5668;
+        --text: #edf0f4;
+        --muted: #b3bdca;
+        --subtle: #9da9b8;
+        --learned: #e4ddfb;
+        --learned-rule: #c7b9f6;
+        --positive: #8bc9ae;
+        --never: #e9bc72;
+      }
+      .canvas { fill: var(--canvas); }
+      .surface { fill: var(--surface); }
+      .raised { fill: var(--raised); }
+      .rule { stroke: var(--rule-strong); }
+      .rule-soft { stroke: var(--rule); }
+      .text { fill: var(--text); font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif; }
+      .muted { fill: var(--muted); font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif; }
+      .subtle { fill: var(--subtle); font-family: "SFMono-Regular", Consolas, monospace; }
+      .learned { fill: var(--learned); }
+      .learned-stroke { stroke: var(--learned-rule); }
+      .positive { fill: var(--positive); }
+      .positive-stroke { stroke: var(--positive); }
+      .never { fill: var(--never); }
+      .never-stroke { stroke: var(--never); }
+      .label { font-size: 20px; font-weight: 800; letter-spacing: 2px; }
+      .small { font-size: 20px; font-weight: 650; }
+      .body { font-size: 22px; font-weight: 650; }
+      .step { font-size: 25px; font-weight: 800; }
+      .headline { font-size: 44px; font-weight: 850; letter-spacing: -1.3px; }
+      .number { font-size: 31px; font-weight: 850; }
+      .slot { font-size: 24px; font-weight: 850; }
+    </style>
+  </defs>
+
+  <rect class="canvas" width="600" height="810" rx="8"/>
+  <rect class="surface rule-soft" x="8" y="8" width="584" height="794" rx="6" stroke-width="2"/>
+
+  <text class="subtle label" x="32" y="48">FLIGHT RECORDER</text>
+  <rect class="raised learned-stroke" x="354" y="22" width="214" height="38" rx="4" stroke-width="2"/>
+  <text class="text small" x="461" y="48" text-anchor="middle">confidence-0.85</text>
+
+  <text class="text headline" x="32" y="112">STOP AFTER 2 OF 8</text>
+  <text class="muted body" x="32" y="148">Two matching votes meet the threshold.</text>
+  <line class="rule-soft" x1="32" y1="174" x2="568" y2="174" stroke-width="2"/>
+
+  <circle class="learned learned-stroke" cx="61" cy="229" r="25" stroke-width="2"/>
+  <text class="surface number" x="61" y="240" text-anchor="middle">1</text>
+  <text class="subtle label" x="103" y="215">REQUEST ISSUED</text>
+  <text class="text step" x="103" y="246">observed answer “42”</text>
+  <text class="muted small" x="103" y="276">1/1 vote · continue until minimum 2</text>
+  <line class="learned-stroke" x1="61" y1="254" x2="61" y2="306" stroke-width="4"/>
+  <path class="learned" d="M52 299 L61 311 L70 299 Z"/>
+
+  <circle class="learned learned-stroke" cx="61" cy="350" r="25" stroke-width="2"/>
+  <text class="surface number" x="61" y="361" text-anchor="middle">2</text>
+  <text class="subtle label" x="103" y="336">REQUEST ISSUED</text>
+  <text class="text step" x="103" y="367">observed answer “42”</text>
+  <text class="muted small" x="103" y="397">2/2 votes · confidence 1.00 ≥ 0.85</text>
+
+  <path class="raised positive-stroke" d="M54 427 H546 L568 449 V487 L546 509 H54 L32 487 V449 Z" stroke-width="4"/>
+  <text class="positive label" x="57" y="461">DECISION</text>
+  <text class="positive headline" x="57" y="495">STOP</text>
+  <text class="text body" x="216" y="466">threshold met after 2 samples</text>
+  <text class="muted small" x="216" y="493">remaining requests are not launched</text>
+
+  <line class="rule-soft" x1="32" y1="537" x2="568" y2="537" stroke-width="2"/>
+  <text class="subtle label" x="32" y="570">POST-STOP · SIX NEVER-ISSUED REQUESTS</text>
+
+  <g aria-label="Requests 3 through 8 were not issued">
+    <g transform="translate(32 592)">
+      <rect class="raised never-stroke" width="256" height="54" rx="4" stroke-width="2" stroke-dasharray="8 7"/>
+      <line class="never-stroke" x1="10" y1="44" x2="46" y2="10" stroke-width="3"/>
+      <text class="never slot" x="29" y="36" text-anchor="middle">3</text>
+      <text class="text slot" x="61" y="36">NOT ISSUED</text>
+    </g>
+    <g transform="translate(312 592)">
+      <rect class="raised never-stroke" width="256" height="54" rx="4" stroke-width="2" stroke-dasharray="8 7"/>
+      <line class="never-stroke" x1="10" y1="44" x2="46" y2="10" stroke-width="3"/>
+      <text class="never slot" x="29" y="36" text-anchor="middle">4</text>
+      <text class="text slot" x="61" y="36">NOT ISSUED</text>
+    </g>
+    <g transform="translate(32 662)">
+      <rect class="raised never-stroke" width="256" height="54" rx="4" stroke-width="2" stroke-dasharray="8 7"/>
+      <line class="never-stroke" x1="10" y1="44" x2="46" y2="10" stroke-width="3"/>
+      <text class="never slot" x="29" y="36" text-anchor="middle">5</text>
+      <text class="text slot" x="61" y="36">NOT ISSUED</text>
+    </g>
+    <g transform="translate(312 662)">
+      <rect class="raised never-stroke" width="256" height="54" rx="4" stroke-width="2" stroke-dasharray="8 7"/>
+      <line class="never-stroke" x1="10" y1="44" x2="46" y2="10" stroke-width="3"/>
+      <text class="never slot" x="29" y="36" text-anchor="middle">6</text>
+      <text class="text slot" x="61" y="36">NOT ISSUED</text>
+    </g>
+    <g transform="translate(32 732)">
+      <rect class="raised never-stroke" width="256" height="54" rx="4" stroke-width="2" stroke-dasharray="8 7"/>
+      <line class="never-stroke" x1="10" y1="44" x2="46" y2="10" stroke-width="3"/>
+      <text class="never slot" x="29" y="36" text-anchor="middle">7</text>
+      <text class="text slot" x="61" y="36">NOT ISSUED</text>
+    </g>
+    <g transform="translate(312 732)">
+      <rect class="raised never-stroke" width="256" height="54" rx="4" stroke-width="2" stroke-dasharray="8 7"/>
+      <line class="never-stroke" x1="10" y1="44" x2="46" y2="10" stroke-width="3"/>
+      <text class="never slot" x="29" y="36" text-anchor="middle">8</text>
+      <text class="text slot" x="61" y="36">NOT ISSUED</text>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="BranchPilot is an adaptive-inference control plane that decides, prompt by prompt, whether to request another model sample or stop.">
+<title>BranchPilot · Adaptive inference control</title>
+<style>
+:root {
+  color-scheme: dark;
+  --canvas: #090b10;
+  --surface: #10141c;
+  --surface-raised: #171c26;
+  --rule: #303846;
+  --rule-strong: #4a5668;
+  --text: #edf0f4;
+  --muted: #b3bdca;
+  --subtle: #9da9b8;
+  --learned: #c7b9f6;
+  --learned-strong: #e4ddfb;
+  --fixed: #78afe8;
+  --heuristic: #e2b364;
+  --positive: #8bc9ae;
+  --negative: #e3a098;
+  --space-1: .25rem;
+  --space-2: .5rem;
+  --space-3: .75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+  --space-9: 6rem;
+  --radius-sm: .25rem;
+  --radius-md: .5rem;
+  --line: .0625rem;
+  --focus-line: .125rem;
+  --shadow: 0 1.5rem 4rem rgb(3 5 9 / .36);
+  --font-sans: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, serif;
+  --font-mono: "SFMono-Regular", Consolas, monospace;
+  font-family: var(--font-sans);
+  background: var(--canvas);
+  color: var(--text);
+}
+* { box-sizing: border-box; }
+html { background: var(--canvas); scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.6;
+  text-rendering: optimizeLegibility;
+}
+a { color: var(--learned-strong); text-underline-offset: .22em; }
+a:hover { color: var(--text); }
+a:focus-visible, .code-shell:focus-visible {
+  outline: var(--focus-line) solid var(--learned-strong);
+  outline-offset: var(--space-1);
+}
+img { display: block; max-width: 100%; height: auto; }
+h1, h2, h3, p { margin-top: 0; }
+h1, h2 { font-family: var(--font-serif); }
+.skip-link {
+  position: fixed;
+  z-index: 10;
+  top: var(--space-3);
+  left: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  transform: translateY(-220%);
+  background: var(--text);
+  color: var(--canvas);
+  font-weight: 800;
+}
+.skip-link:focus { transform: translateY(0); }
+.shell { width: min(calc(100% - 2rem), 76rem); margin-inline: auto; }
+.site-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+  padding-block: var(--space-5);
+  border-bottom: var(--line) solid var(--rule);
+}
+.wordmark {
+  color: var(--text);
+  font: 800 .8125rem/1.2 var(--font-mono);
+  letter-spacing: .12em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+.site-nav { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-5); }
+.site-nav a {
+  color: var(--muted);
+  font: 700 .75rem/1.4 var(--font-mono);
+  letter-spacing: .05em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+.site-nav a:hover { color: var(--text); }
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(15rem, .45fr);
+  gap: var(--space-8);
+  align-items: end;
+  padding-block: var(--space-9);
+  border-bottom: var(--line) solid var(--rule);
+}
+.eyebrow, .section-index {
+  color: var(--learned);
+  font: 800 .6875rem/1.35 var(--font-mono);
+  letter-spacing: .15em;
+  text-transform: uppercase;
+}
+.eyebrow { display: block; margin-bottom: var(--space-4); }
+h1 {
+  max-width: 54rem;
+  margin-bottom: var(--space-5);
+  font-size: clamp(2.75rem, 7.5vw, 6.25rem);
+  font-weight: 700;
+  letter-spacing: -.05em;
+  line-height: .94;
+  overflow-wrap: break-word;
+}
+h1 span { color: var(--learned-strong); }
+.lede { max-width: 46rem; margin-bottom: 0; color: var(--muted); font-size: 1.125rem; line-height: 1.72; }
+.hero-aside { padding-left: var(--space-5); border-left: var(--line) solid var(--rule-strong); }
+.hero-aside strong { display: block; margin-bottom: var(--space-3); font: 800 1rem/1.45 var(--font-mono); }
+.hero-aside p { margin-bottom: var(--space-5); color: var(--subtle); font-size: .875rem; }
+.action-row { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: var(--space-3) var(--space-5);
+  border: var(--line) solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: 800 .75rem/1.2 var(--font-mono);
+  letter-spacing: .04em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+.button-primary { border-color: var(--learned); background: var(--learned); color: var(--canvas); }
+.button-primary:hover { background: var(--learned-strong); color: var(--canvas); }
+.button-secondary:hover { border-color: var(--text); }
+.control-loop {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  border-bottom: var(--line) solid var(--rule);
+  list-style: none;
+}
+.control-loop li { min-width: 0; padding: var(--space-5); border-right: var(--line) solid var(--rule); }
+.control-loop li:last-child { border-right: 0; }
+.control-loop span { display: block; margin-bottom: var(--space-2); color: var(--subtle); font: 700 .6875rem/1.3 var(--font-mono); }
+.control-loop strong { display: block; font-size: 1rem; overflow-wrap: anywhere; }
+.control-loop li:last-child strong { color: var(--positive); }
+.section { padding-block: var(--space-9); border-bottom: var(--line) solid var(--rule); }
+.section-heading {
+  display: grid;
+  grid-template-columns: minmax(15rem, .7fr) minmax(18rem, 1fr);
+  gap: var(--space-7);
+  align-items: end;
+  margin-bottom: var(--space-7);
+}
+.section-index { display: block; margin-bottom: var(--space-3); }
+h2 { margin-bottom: 0; font-size: clamp(2.25rem, 5vw, 4rem); letter-spacing: -.04em; line-height: 1; }
+.section-heading p { margin-bottom: 0; color: var(--muted); font-size: .9375rem; line-height: 1.72; }
+.recorder-frame { border: var(--line) solid var(--rule-strong); background: var(--surface); box-shadow: var(--shadow); }
+.recorder-frame img { width: min(100%, 50rem); margin-inline: auto; }
+.recorder-frame figcaption {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, .55fr);
+  gap: var(--space-6);
+  padding: var(--space-5) var(--space-6);
+  border-top: var(--line) solid var(--rule);
+  color: var(--subtle);
+  font-size: .8125rem;
+}
+.recorder-frame figcaption strong { color: var(--muted); }
+.strategy-grid { display: grid; grid-template-columns: .78fr 1.08fr 1.14fr; gap: var(--space-6); }
+.strategy-card {
+  min-width: 0;
+  padding: var(--space-6) 0;
+  border-top: .25rem solid var(--rule-strong);
+  border-bottom: var(--line) solid var(--rule);
+}
+.strategy-card-fixed { border-top-color: var(--fixed); }
+.strategy-card-heuristic { border-top-color: var(--heuristic); }
+.strategy-card-learned { border-top-color: var(--learned); }
+.strategy-card .ordinal { display: block; margin-bottom: var(--space-6); color: var(--subtle); font: 700 .75rem/1.3 var(--font-mono); }
+.strategy-card h3 { margin-bottom: var(--space-3); font-size: 1.25rem; letter-spacing: -.02em; }
+.strategy-card p { margin-bottom: var(--space-5); color: var(--muted); font-size: .875rem; }
+.strategy-card code { color: var(--text); font: 650 .75rem/1.6 var(--font-mono); overflow-wrap: anywhere; }
+.gateway-grid { display: grid; grid-template-columns: minmax(15rem, .42fr) minmax(0, 1fr); gap: var(--space-8); align-items: start; }
+.gateway-copy p { color: var(--muted); }
+.interface-list { margin: var(--space-6) 0 0; padding: 0; list-style: none; }
+.interface-list li { padding-block: var(--space-3); border-top: var(--line) solid var(--rule); color: var(--muted); font-size: .875rem; }
+.interface-list strong { display: block; margin-bottom: var(--space-1); color: var(--text); font: 750 .75rem/1.4 var(--font-mono); }
+.code-shell { max-width: 100%; overflow-x: auto; border: var(--line) solid var(--rule-strong); background: var(--surface); box-shadow: var(--shadow); }
+.code-label {
+  position: sticky;
+  left: 0;
+  display: block;
+  width: fit-content;
+  padding: var(--space-3) var(--space-5);
+  color: var(--subtle);
+  font: 700 .6875rem/1.3 var(--font-mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+pre { width: max-content; min-width: 100%; margin: 0; padding: 0 var(--space-5) var(--space-6); color: var(--text); font: 600 .8125rem/1.7 var(--font-mono); }
+.code-comment { color: var(--subtle); }
+.code-command { color: var(--learned-strong); }
+.code-header { color: var(--positive); }
+.evidence-rail {
+  display: grid;
+  grid-template-columns: minmax(12rem, .28fr) minmax(0, 1fr) auto;
+  gap: var(--space-6);
+  align-items: center;
+  padding: var(--space-6);
+  border-block: var(--line) solid var(--rule-strong);
+  background: var(--surface);
+}
+.verdict { padding-left: var(--space-5); border-left: .25rem solid var(--negative); }
+.verdict span { display: block; color: var(--negative); font: 850 clamp(2.5rem, 6vw, 4.75rem)/.9 var(--font-mono); letter-spacing: -.06em; }
+.verdict small { color: var(--subtle); font: 700 .6875rem/1.5 var(--font-mono); text-transform: uppercase; }
+.evidence-copy h3 { margin-bottom: var(--space-2); font-size: 1rem; }
+.evidence-copy p { max-width: 44rem; margin-bottom: 0; color: var(--muted); font-size: .875rem; }
+.footer {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  padding-block: var(--space-6);
+  color: var(--subtle);
+  font: 650 .75rem/1.5 var(--font-mono);
+}
+.footer-links { display: flex; flex-wrap: wrap; gap: var(--space-4); }
+@media (max-width: 52rem) {
+  .hero, .section-heading, .gateway-grid { grid-template-columns: 1fr; }
+  .hero { gap: var(--space-6); padding-block: var(--space-8); }
+  .hero-aside { max-width: 34rem; }
+  .control-loop { grid-template-columns: 1fr 1fr; }
+  .control-loop li:nth-child(2) { border-right: 0; }
+  .control-loop li:nth-child(-n + 2) { border-bottom: var(--line) solid var(--rule); }
+  .strategy-grid { grid-template-columns: 1fr; gap: var(--space-5); }
+  .strategy-card { padding-block: var(--space-5); }
+  .strategy-card .ordinal { margin-bottom: var(--space-4); }
+  .evidence-rail { grid-template-columns: minmax(10rem, .35fr) minmax(0, 1fr); }
+  .evidence-rail .button { grid-column: 1 / -1; justify-self: start; }
+}
+@media (max-width: 36rem) {
+  .shell { width: min(calc(100% - 2rem), 76rem); }
+  .site-header { align-items: flex-start; flex-direction: column; }
+  .hero, .section { padding-block: var(--space-7); }
+  h1 { font-size: clamp(2.55rem, 15vw, 4rem); }
+  .control-loop { grid-template-columns: 1fr; }
+  .control-loop li { border-right: 0; border-bottom: var(--line) solid var(--rule); }
+  .control-loop li:last-child { border-bottom: 0; }
+  .section-heading { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
+  .recorder-frame figcaption, .evidence-rail { grid-template-columns: minmax(0, 1fr); }
+  .recorder-frame figcaption { padding: var(--space-4); }
+  .evidence-rail .button { grid-column: auto; }
+  .button { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to product</a>
+<div class="shell">
+  <header class="site-header">
+    <a class="wordmark" href="https://github.com/mottopanikeiku/branchpilot">BranchPilot / 0.3</a>
+    <nav class="site-nav" aria-label="Product navigation">
+      <a href="#recorder">How it decides</a>
+      <a href="#strategies">Strategies</a>
+      <a href="#gateway">Gateway</a>
+      <a href="#evidence">Evidence</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <div>
+        <span class="eyebrow">Adaptive inference control plane</span>
+        <h1 id="hero-title">Adaptive inference control, <span>prompt by prompt.</span></h1>
+        <p class="lede">BranchPilot observes each completed model sample, applies a deployable stopping strategy, then either requests exactly one more sample or stops. Fixed counts, transparent heuristics, and learned Safetensors policies share the same bounded sequential runtime.</p>
+      </div>
+      <aside class="hero-aside" aria-label="Deployment summary">
+        <strong>Observe → decide → request or stop</strong>
+        <p>Put policy selection in front of any sequential OpenAI-compatible backend. Requests after STOP are never issued.</p>
+        <div class="action-row">
+          <a class="button button-primary" href="https://github.com/mottopanikeiku/branchpilot#readme">Start in the README</a>
+          <a class="button button-secondary" href="https://mottopanikeiku.github.io/branchpilot/evidence/v0.2/">See v0.2 evidence</a>
+        </div>
+      </aside>
+    </section>
+
+    <ol class="control-loop" aria-label="BranchPilot control loop">
+      <li><span>01 / REQUEST</span><strong>Issue one sample</strong></li>
+      <li><span>02 / OBSERVE</span><strong>Parse answer + usage</strong></li>
+      <li><span>03 / DECIDE</span><strong>Evaluate observed prefix</strong></li>
+      <li><span>04 / CONTROL</span><strong>Continue once or STOP</strong></li>
+    </ol>
+
+    <section class="section" id="recorder" aria-labelledby="recorder-title">
+      <div class="section-heading">
+        <div>
+          <span class="section-index">01 / FLIGHT RECORDER</span>
+          <h2 id="recorder-title">A stop you can inspect.</h2>
+        </div>
+        <p>The confidence-0.85 strategy waits for its minimum of two observations. When both parsed answers agree, vote confidence reaches 1.00 and the session stops at two of eight. Every remaining slot is explicitly marked as a request that was not issued.</p>
+      </div>
+      <figure class="recorder-frame">
+        <img src="assets/decision-flight-recorder.svg" alt="Decision flight recorder: confidence-0.85 observes two matching answers, stops after 2 of 8 allowed samples, and marks requests 3 through 8 not issued.">
+        <figcaption>
+          <span><strong>Illustrative trace.</strong> Shape, labels, and status text carry the meaning: solid numbered observations were issued; dashed crossed slots were not.</span>
+          <span><strong>Accounting boundary.</strong> BranchPilot controls marginal sample requests. This trace makes no claim about latency, GPU time, energy, or dollars.</span>
+        </figcaption>
+      </figure>
+    </section>
+
+    <section class="section" id="strategies" aria-labelledby="strategies-title">
+      <div class="section-heading">
+        <div>
+          <span class="section-index">02 / STRATEGIES</span>
+          <h2 id="strategies-title">Choose the controller you can defend.</h2>
+        </div>
+        <p>Start with the policy you can explain today; graduate only when validation supports it. Every strategy implements the same observed-prefix decision interface and honors a hard sample horizon.</p>
+      </div>
+      <div class="strategy-grid">
+        <article class="strategy-card strategy-card-fixed">
+          <span class="ordinal">01 / PREDICTABLE</span>
+          <h3>Fixed count</h3>
+          <p>Stop after an operator-selected number of samples. A transparent baseline and a dependable deployment default.</p>
+          <code>FixedStrategy(samples=2, max_samples=8)</code>
+        </article>
+        <article class="strategy-card strategy-card-heuristic">
+          <span class="ordinal">02 / OBSERVABLE</span>
+          <h3>Agreement rules</h3>
+          <p>Stop on a vote-share threshold or a run of identical parsed answers. Decisions come directly from the observed prefix.</p>
+          <code>VoteConfidenceStrategy</code><br>
+          <code>ConsecutiveAgreementStrategy</code>
+        </article>
+        <article class="strategy-card strategy-card-learned">
+          <span class="ordinal">03 / LEARNED</span>
+          <h3>Safetensors policy</h3>
+          <p>Distill exact offline stopping targets into a marginal-sample-cost-conditioned Q-policy. Deployment is Torch-free and the artifact is hash-bound and non-executable.</p>
+          <code>BranchPilotPolicy.load("policy.safetensors")</code>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="gateway" aria-labelledby="gateway-title">
+      <div class="gateway-grid">
+        <div class="gateway-copy">
+          <span class="section-index">03 / GATEWAY</span>
+          <h2 id="gateway-title">Keep the client. Change the control plane.</h2>
+          <p>Run a text-only OpenAI-compatible gateway in front of a sequential upstream. The operator owns credentials, route limits, the deployment plan, and the decoding boundary.</p>
+          <ul class="interface-list">
+            <li><strong>STANDARD REQUEST</strong><span><code>POST /v1/chat/completions</code></span></li>
+            <li><strong>MODEL ALIAS</strong><span><code>math-local</code> maps to the upstream model.</span></li>
+            <li><strong>RESULT HEADERS</strong><span><code>x-branchpilot-samples</code>, <code>-strategy</code>, and <code>-selection</code>.</span></li>
+          </ul>
+        </div>
+        <div class="code-shell" role="region" tabindex="0" aria-label="Gateway quickstart code; scroll horizontally">
+          <span class="code-label">Two processes + one standard client request</span>
+<pre><code><span class="code-comment"># Credentials referenced by examples/gateway.json</span>
+export BRANCHPILOT_GATEWAY_KEY=client-secret
+export BRANCHPILOT_UPSTREAM_KEY=upstream-secret
+
+<span class="code-comment"># Process 1 · vLLM environment; outside BranchPilot's install boundary</span>
+<span class="code-command">vllm serve Qwen/Qwen2.5-1.5B-Instruct --host 127.0.0.1 --port 8001 --api-key "$BRANCHPILOT_UPSTREAM_KEY"</span>
+
+<span class="code-comment"># Process 2 · BranchPilot source environment</span>
+<span class="code-command">uv sync --extra gateway</span>
+<span class="code-command">uv run branchpilot-gateway --config examples/gateway.json --host 127.0.0.1 --port 8000</span>
+
+<span class="code-comment"># Standard OpenAI-compatible request</span>
+<span class="code-command">curl -i http://127.0.0.1:8000/v1/chat/completions \
+  -H "Authorization: Bearer $BRANCHPILOT_GATEWAY_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"math-local","messages":[{"role":"user","content":"What is 17 + 25?"}]}'</span>
+
+<span class="code-header">x-branchpilot-samples: 2</span>
+<span class="code-header">x-branchpilot-strategy: vote_confidence</span>
+<span class="code-header">x-branchpilot-selection: majority</span></code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="evidence" aria-labelledby="evidence-title">
+      <div class="section-heading">
+        <div>
+          <span class="section-index">04 / EVIDENCE</span>
+          <h2 id="evidence-title">Negative results stay visible.</h2>
+        </div>
+        <p>The canonical v0.2 benchmark tested the prespecified learned-policy criterion on one model and one task. That criterion failed. The result constrains the learned strategy; it does not erase the deployable fixed and heuristic controllers.</p>
+      </div>
+      <div class="evidence-rail">
+        <div class="verdict">
+          <small>Canonical v0.2</small>
+          <span>FAIL</span>
+        </div>
+        <div class="evidence-copy">
+          <h3>Learned policy did not beat its frozen adaptive comparators.</h3>
+          <p>Primary marginal-sample utility lower bounds were −0.0152, −0.0422, and −0.0491. The protocol required two strictly positive bounds and a third nonnegative bound.</p>
+        </div>
+        <a class="button button-secondary" href="https://mottopanikeiku.github.io/branchpilot/evidence/v0.2/">Open canonical evidence</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>BranchPilot · source-first adaptive inference control</span>
+    <span class="footer-links">
+      <a href="https://github.com/mottopanikeiku/branchpilot">Repository</a>
+      <a href="https://github.com/mottopanikeiku/branchpilot#readme">README</a>
+      <a href="https://mottopanikeiku.github.io/branchpilot/evidence/v0.2/">Evidence v0.2 · FAIL</a>
+    </span>
+  </footer>
+</div>
+</body>
+</html>
