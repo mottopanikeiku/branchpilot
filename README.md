@@ -10,7 +10,7 @@
 [![Modal](https://img.shields.io/badge/GPU-Modal%20L4-7C3AED)](https://modal.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22C55E.svg)](LICENSE)
 
-<img src="assets/gsm8k-pareto.svg" alt="BranchPilot held-out GSM8K accuracy versus inference compute benchmark" width="100%">
+<img src="assets/gsm8k-v2-pareto.svg" alt="BranchPilot canonical held-out GSM8K accuracy versus average samples with 95% intervals" width="100%">
 
 </div>
 
@@ -18,9 +18,28 @@ Most inference-time scaling systems pick one global sample count: easy prompts a
 
 Complete offline trajectories expose the STOP reward and next prefix at every step. BranchPilot solves each logged trajectory exactly by backward induction, then distills those counterfactual Q-values into one cost-conditioned policy. Deployment uses a Torch-free NumPy runtime and bounded, non-executable Safetensors artifacts.
 
-## Exploratory v0.1 result
+## Canonical v0.2 result: the protocol failed
 
-The currently committed benchmark is an exploratory point-estimate study from the original v0.1 pipeline: **Qwen2.5-1.5B-Instruct**, 8 stochastic samples per prompt, 512 controller-training trajectories, and 256 controller-held-out trajectories drawn from GSM8K train. It uses one generation seed, one controller seed, a sparse baseline grid, no confidence intervals, and a permissive parser that could accept a final number from token-limit-truncated reasoning. It is retained for provenance—not promoted as v0.2 evidence—while the frozen official-test protocol is run with finish-aware parsing and complete baselines.
+The locked evaluation uses **Qwen2.5-1.5B-Instruct**, 1,600 controller-training prompts, 400 validation prompts, and the complete **1,319-example official GSM8K test**, with 8 samples per prompt. Comparator names were selected on validation and committed before test. Every point uses 10,000 paired prompt-bootstrap resamples.
+
+**The prespecified success rule did not pass.** Utility-delta 95% lower bounds at the three primary costs were $-0.0152$, $-0.0422$, and $-0.0491$; the protocol required at least two to be strictly positive and the third nonnegative. BranchPilot advances the static fixed-count frontier between roughly 1.5 and 3 samples, but simple adaptive agreement/confidence rules remain stronger under the frozen utility comparison.
+
+| Policy | Accuracy | Avg. samples | What the official test shows |
+|---|---:|---:|---|
+| fixed-1 | 68.8% | 1.00 | minimum-compute reference |
+| BranchPilot $\lambda=0.15$ | 72.5% | 1.52 | learned static-frontier point |
+| fixed-2 | 71.9% | 2.00 | static reference |
+| BranchPilot $\lambda=0.05$ | 75.1% | 2.49 | fewer samples and higher accuracy than fixed-3 |
+| fixed-3 | 74.5% | 3.00 | static reference |
+| BranchPilot $\lambda=0.025$ | 76.2% | 2.98 | +1.7 points versus fixed-3 at similar compute |
+| agreement-2 | 78.8% | 3.23 | frozen low-cost adaptive comparator |
+| fixed-8 | 80.1% | 8.00 | maximum-sample ceiling |
+
+This is the result, not a buried caveat. The [interactive evidence report](benchmarks/report-v2.html) renders the FAIL verdict, exact rule, primary/sensitivity costs, paired intervals, stop histograms, provenance chain, and every declared limitation. Machine evidence: [test JSON](benchmarks/gsm8k-v2.json), [validation freeze](benchmarks/gsm8k-v2-validation.json), [generation manifest](benchmarks/manifest-v2.json), [protocol](benchmarks/protocol.json), and [detached checksums](benchmarks/checksums-v2.txt). The pinned L4 run generated 6,352,308 completion tokens in 2,565.6 measured generation-seconds at 2,476 tokens/s.
+
+## Legacy exploratory v0.1 result
+
+The original v0.1 benchmark was an exploratory point-estimate study: **Qwen2.5-1.5B-Instruct**, 8 stochastic samples per prompt, 512 controller-training trajectories, and 256 controller-held-out trajectories drawn from GSM8K train. It used one generation seed, one controller seed, a sparse baseline grid, no confidence intervals, and a permissive parser that could accept a final number from token-limit-truncated reasoning. It is retained for provenance, not promoted as v0.2 evidence.
 
 | Policy | Accuracy | Avg. samples | Comparison |
 |---|---:|---:|---|

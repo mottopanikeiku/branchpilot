@@ -29,6 +29,7 @@ jobs:
       - name: Verify canonical schema-v2 evidence
         run: |
           uv sync --locked
+          (cd benchmarks && sha256sum -c checksums-v2.txt)
           uv run branchpilot report \
             --benchmark benchmarks/gsm8k-v2.json \
             --html /tmp/report-v2.html \
