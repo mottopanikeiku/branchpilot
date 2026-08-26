@@ -53,8 +53,10 @@ jobs:
         with:
           enable-cache: true
           python-version: "3.14"
+      - name: Install locked build environment
+        run: uv sync --locked --extra build
       - name: Build release artifacts
-        run: uv build
+        run: uv build --no-build-isolation
       - name: Install wheel without training dependencies
         run: |
           uv venv --python 3.14 .venv-runtime

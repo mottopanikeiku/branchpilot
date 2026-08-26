@@ -88,6 +88,15 @@ def test_paths_alias_matches_normalized_relative_and_absolute_paths(
     assert not paths_alias(relative, tmp_path / "other.txt")
 
 
+def test_paths_alias_resolves_symlinked_parents_for_missing_outputs(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    linked = tmp_path / "linked"
+    linked.symlink_to(real, target_is_directory=True)
+
+    assert paths_alias(real / "future.json", linked / "future.json")
+
+
 def test_paths_alias_matches_hardlinks(tmp_path: Path) -> None:
     original = tmp_path / "artifact.txt"
     original.write_text("artifact", encoding="utf-8")

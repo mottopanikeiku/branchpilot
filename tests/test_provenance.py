@@ -30,21 +30,59 @@ def protocol_payload() -> dict[str, Any]:
             "model": "Qwen/model",
             "model_revision": "model-revision",
             "runtime_image": "vllm/image@sha256:" + "3" * 64,
+            "runtime_overlay": "ln -sf /usr/bin/python3 /usr/bin/python",
         },
         "collection": {
             "train_records": 1,
             "validation_records": 1,
             "test_records": 1,
+            "test_split": "complete-official-test",
             "samples_per_prompt": 8,
             "max_completion_tokens": 512,
             "temperature": 0.7,
             "top_p": 0.95,
             "logprobs": 1,
             "sampling_seed": 17,
+            "selection": "seeded-shuffle-with-recorded-source-indices",
             "system_prompt_sha256": "a" * 64,
             "parser": "branchpilot.numeric-complete-v3",
             "completed_output_fallback": "last-numeric-only-when-finish-reason-is-stop",
+            "truncated_outputs_vote": False,
         },
+        "controller": {
+            "algorithm": "exact-backward-q-regression-v1",
+            "hidden_size": 8,
+            "epochs": 2,
+            "batch_size": 8,
+            "learning_rate": 0.0003,
+            "seed": 7,
+            "max_samples": 8,
+            "training_costs": [0.0, 0.1],
+        },
+        "evaluation": {
+            "primary_costs": [0.05, 0.1, 0.15],
+            "reported_costs": [0.05, 0.1, 0.15],
+            "objective": "accuracy - lambda * (samples - 1)",
+            "bootstrap_unit": "prompt",
+            "bootstrap_resamples": 10,
+            "bootstrap_seed": 17,
+            "confidence": 0.95,
+            "comparator_selection": "best-validation-utility-per-cost-frozen-before-test",
+            "fixed_counts": list(range(1, 9)),
+            "confidence_thresholds": [0.5, 1.0],
+            "agreement_streaks": [2, 3],
+        },
+        "decision_rule": {
+            "success": (
+                "paired utility interval lower bound above zero at two or more primary costs "
+                "and nonnegative at the third"
+            ),
+            "failure_handling": (
+                "publish every result unchanged; do not retune, change seeds, "
+                "or regenerate the canonical bank"
+            ),
+        },
+        "limitations_declared_in_advance": ["fixture limitation"],
     }
 
 
@@ -71,10 +109,13 @@ def _manifest(protocol: Protocol, data_path: Path, split: str = "train") -> dict
     collection = protocol.payload["collection"]
     return {
         "manifest_schema": 3,
+        "data_schema": 2,
         "dataset": {
             "id": scope["dataset"],
             "config": scope["dataset_config"],
             "revision": scope["dataset_revision"],
+            "selection": collection["selection"],
+            "test_split": collection["test_split"],
             "source_files": {
                 "train": {"sha256": scope["dataset_train_sha256"]},
                 "test": {"sha256": scope["dataset_test_sha256"]},
@@ -96,8 +137,12 @@ def _manifest(protocol: Protocol, data_path: Path, split: str = "train") -> dict
             "sha256": collection["system_prompt_sha256"],
             "parser": collection["parser"],
             "completed_output_fallback": collection["completed_output_fallback"],
+            "truncated_outputs_vote": collection["truncated_outputs_vote"],
         },
-        "runtime": {"image": scope["runtime_image"]},
+        "runtime": {
+            "image": scope["runtime_image"],
+            "overlay": scope["runtime_overlay"],
+        },
         "splits": {
             "train": {"records": collection["train_records"]},
             "validation": {"records": collection["validation_records"]},
@@ -554,10 +599,8 @@ def test_non_object_protocol_section_is_rejected(
     tmp_path: Path, protocol_payload: dict[str, Any]
 ) -> None:
     protocol_payload["scope"] = "not-an-object"
-    protocol = _load_protocol(tmp_path, protocol_payload)
-
     with pytest.raises(ValueError, match=r"protocol\.scope must be an object"):
-        validate_manifest_protocol({}, protocol)
+        _load_protocol(tmp_path, protocol_payload)
 
 
 @pytest.mark.parametrize(

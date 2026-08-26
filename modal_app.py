@@ -29,16 +29,23 @@ VLLM_IMAGE = (
     "vllm/vllm-openai:v0.10.2@"
     "sha256:607442e407b0fea97f8a132a78b787c121a996dd4de181fa08e8da06e71ec2db"
 )
-CACHE_PATH = "/tmp/branchpilot-huggingface"
+RUNTIME_OVERLAY = "ln -sf /usr/bin/python3 /usr/bin/python"
 SYSTEM_PROMPT = (
     "Solve the arithmetic word problem carefully. Show concise reasoning, then put only the "
     "final numeric value after '####'."
 )
 PARSER = "branchpilot.numeric-complete-v3"
 COMPLETED_OUTPUT_FALLBACK = "last-numeric-only-when-finish-reason-is-stop"
+DATASET_SELECTION = "seeded-shuffle-with-recorded-source-indices"
+TEST_SPLIT = "complete-official-test"
 
 app = modal.App("branchpilot-rollouts")
-image = modal.Image.from_registry(VLLM_IMAGE).entrypoint([]).add_local_python_source("branchpilot")
+image = (
+    modal.Image.from_registry(VLLM_IMAGE)
+    .run_commands(RUNTIME_OVERLAY)
+    .entrypoint([])
+    .add_local_python_source("branchpilot")
+)
 
 
 def _sha256_bytes(payload: bytes) -> str:
@@ -155,18 +162,19 @@ def collect_rollouts(
     random.Random(seed + 1).shuffle(test_indices)
     test_indices = test_indices[:test_size]
 
+    cache_path = tempfile.mkdtemp(prefix="branchpilot-huggingface-")
     snapshot = Path(
         snapshot_download(
             repo_id=model_id,
             revision=model_revision,
-            cache_dir=CACHE_PATH,
+            cache_dir=cache_path,
         )
     )
     model_files = _snapshot_files(snapshot)
     model = LLM(
         model=str(snapshot),
         tokenizer=str(snapshot),
-        download_dir=CACHE_PATH,
+        download_dir=cache_path,
         dtype="half",
         enable_prefix_caching=True,
         gpu_memory_utilization=0.90,
@@ -318,6 +326,8 @@ def collect_rollouts(
             "id": DATASET,
             "config": DATASET_CONFIG,
             "revision": DATASET_REVISION,
+            "selection": DATASET_SELECTION,
+            "test_split": TEST_SPLIT,
             "source_files": {"train": train_source, "test": test_source},
         },
         "model": {
@@ -341,9 +351,11 @@ def collect_rollouts(
             "sha256": _sha256_bytes(SYSTEM_PROMPT.encode()),
             "parser": PARSER,
             "completed_output_fallback": COMPLETED_OUTPUT_FALLBACK,
+            "truncated_outputs_vote": False,
         },
         "runtime": {
             "image": VLLM_IMAGE,
+            "overlay": RUNTIME_OVERLAY,
             "gpu": torch.cuda.get_device_name(0),
             "cuda": torch.version.cuda,
             "torch": torch.__version__,
@@ -431,9 +443,12 @@ def _validate_collection_protocol(
         "scope.model": model_id,
         "scope.model_revision": model_revision,
         "scope.runtime_image": VLLM_IMAGE,
+        "scope.runtime_overlay": RUNTIME_OVERLAY,
         "collection.train_records": train_size,
         "collection.validation_records": validation_size,
         "collection.test_records": test_size,
+        "collection.test_split": TEST_SPLIT,
+        "collection.selection": DATASET_SELECTION,
         "collection.samples_per_prompt": max_samples,
         "collection.max_completion_tokens": max_tokens,
         "collection.temperature": 0.7,

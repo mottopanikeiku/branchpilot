@@ -85,11 +85,11 @@ def sha256_file(path: _PathLike) -> str:
 
 
 def paths_alias(left: _PathLike, right: _PathLike) -> bool:
-    left_path = os.fspath(left)
-    right_path = os.fspath(right)
-    if os.path.normcase(os.path.abspath(left_path)) == os.path.normcase(
-        os.path.abspath(right_path)
-    ):
+    left_path = Path(left)
+    right_path = Path(right)
+    left_resolved = os.path.normcase(os.fspath(left_path.resolve(strict=False)))
+    right_resolved = os.path.normcase(os.fspath(right_path.resolve(strict=False)))
+    if left_resolved == right_resolved:
         return True
     try:
         return os.path.samefile(left_path, right_path)

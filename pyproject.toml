@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatchling==1.32.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -25,10 +25,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+build = [
+  "hatchling==1.32.0",
+]
 train = [
   "torch>=2.6,<3",
 ]
 dev = [
+  "hatchling==1.32.0",
   "pytest>=8.2,<9",
   "ruff>=0.6,<1",
   "torch>=2.6,<3",

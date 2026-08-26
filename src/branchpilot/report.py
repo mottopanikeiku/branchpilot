@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import math
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from branchpilot.artifacts import atomic_write_text
 
@@ -80,7 +83,9 @@ _SUCCESS_RULE = (
     "paired utility interval lower bound above zero at two or more primary costs "
     "and nonnegative at the third"
 )
-_NUMERIC_TOLERANCE = 1e-10
+_NUMERIC_TOLERANCE = 1e-12
+_MAX_BOOTSTRAP_AXIS = 100_000
+_MAX_BOOTSTRAP_CELLS = 20_000_000
 
 
 def _invalid(path: str, message: str) -> None:
@@ -155,10 +160,80 @@ def _expect_close(actual: float, expected: float, path: str) -> None:
     if not math.isclose(
         actual,
         expected,
-        rel_tol=_NUMERIC_TOLERANCE,
+        rel_tol=0.0,
         abs_tol=_NUMERIC_TOLERANCE,
     ):
         _invalid(path, f"must equal the recomputed evidence value ({expected:.17g})")
+
+
+def _expect_interval(
+    actual: Any,
+    expected: tuple[float, float],
+    path: str,
+) -> None:
+    lower, upper = _interval(actual, path)
+    _expect_close(lower, expected[0], f"{path}.lower")
+    _expect_close(upper, expected[1], f"{path}.upper")
+
+
+def _bootstrap_estimates(
+    values: np.ndarray,
+    bootstrap_indices: np.ndarray,
+) -> np.ndarray:
+    return np.mean(values[bootstrap_indices], axis=1)
+
+
+def _estimate_interval(estimates: np.ndarray) -> tuple[float, float]:
+    tail = (1.0 - 0.95) / 2.0
+    lower, upper = np.quantile(estimates, (tail, 1.0 - tail))
+    return float(lower), float(upper)
+
+
+def _reject_nonfinite_json(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant {value!r}")
+
+
+def _validate_recomputed_row(
+    row: dict[str, Any],
+    path: str,
+    *,
+    cost: float,
+    correct: np.ndarray,
+    samples: np.ndarray,
+    tokens: np.ndarray,
+    max_samples: int,
+    correct_estimates: np.ndarray,
+    sample_estimates: np.ndarray,
+    token_estimates: np.ndarray,
+) -> None:
+    utilities = correct - cost * (samples - 1.0)
+    utility_estimates = correct_estimates - cost * (sample_estimates - 1.0)
+    scalar_fields = (
+        ("accuracy", float(np.mean(correct))),
+        ("average_samples", float(np.mean(samples))),
+        ("average_tokens", float(np.mean(tokens))),
+        ("p50_samples", float(np.quantile(samples, 0.5))),
+        ("p90_samples", float(np.quantile(samples, 0.9))),
+        ("utility", float(np.mean(utilities))),
+    )
+    for field, expected in scalar_fields:
+        _expect_close(float(row[field]), expected, f"{path}.{field}")
+    interval_fields = (
+        ("accuracy_interval", correct_estimates),
+        ("average_samples_interval", sample_estimates),
+        ("average_tokens_interval", token_estimates),
+        ("utility_interval", utility_estimates),
+    )
+    for field, estimates in interval_fields:
+        _expect_interval(
+            row[field],
+            _estimate_interval(estimates),
+            f"{path}.{field}",
+        )
+    histogram_counts = np.bincount(samples.astype(np.int64), minlength=max_samples + 1)
+    expected_histogram = [int(value) for value in histogram_counts[1:]]
+    if row["stop_histogram"] != expected_histogram:
+        _invalid(f"{path}.stop_histogram", "must match recomputed policy outcomes")
 
 
 def _mean(values: list[float]) -> float:
@@ -230,18 +305,50 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
         "rows",
         "comparisons",
         "outcomes",
+        "policy_outcomes",
         "bootstrap",
         "objective",
         "data",
         "policy",
         "pareto_frontier",
+        "protocol_raw",
     )
     _required(root, required, "payload")
     if root["schema_version"] != 2:
         _invalid("payload.schema_version", "must equal 2")
 
     records = _integer(root["records"], "payload.records", minimum=1)
+    if records > _MAX_BOOTSTRAP_AXIS:
+        _invalid(
+            "payload.records",
+            f"must be at most {_MAX_BOOTSTRAP_AXIS:,} for bounded bootstrap validation",
+        )
     max_samples = _integer(root["max_samples"], "payload.max_samples", minimum=1)
+    bootstrap = _mapping(root["bootstrap"], "payload.bootstrap")
+    _required(bootstrap, ("resamples", "seed", "confidence"), "payload.bootstrap")
+    resamples = _integer(
+        bootstrap["resamples"],
+        "payload.bootstrap.resamples",
+        minimum=1,
+    )
+    if resamples > _MAX_BOOTSTRAP_AXIS:
+        _invalid(
+            "payload.bootstrap.resamples",
+            f"must be at most {_MAX_BOOTSTRAP_AXIS:,}",
+        )
+    if resamples * records > _MAX_BOOTSTRAP_CELLS:
+        _invalid(
+            "payload.bootstrap",
+            f"resamples × records must be at most {_MAX_BOOTSTRAP_CELLS:,}",
+        )
+    bootstrap_seed = _integer(
+        bootstrap["seed"],
+        "payload.bootstrap.seed",
+        minimum=0,
+    )
+    confidence = _number(bootstrap["confidence"], "payload.bootstrap.confidence")
+    if not math.isclose(confidence, 0.95, rel_tol=0.0, abs_tol=1e-12):
+        _invalid("payload.bootstrap.confidence", "must equal 0.95 for this 95% evidence report")
     raw_costs = _list(root["costs"], "payload.costs")
     if not raw_costs:
         _invalid("payload.costs", "must contain at least one evaluated cost")
@@ -258,12 +365,19 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
     policies_by_cost: dict[float, dict[str, str]] = {cost: {} for cost in costs}
     rows_by_cost: dict[float, dict[str, dict[str, Any]]] = {cost: {} for cost in costs}
     full_rows: list[dict[str, Any]] = []
+    policy_families: dict[str, str] = {}
     for index, raw_row in enumerate(rows):
         path = f"payload.rows[{index}]"
         row = _mapping(raw_row, path)
         _required(row, _REQUIRED_ROW_FIELDS, path)
         policy_name = _string(row["policy"], f"{path}.policy")
         family = _string(row["family"], f"{path}.family")
+        previous_family = policy_families.setdefault(policy_name, family)
+        if previous_family != family:
+            _invalid(
+                f"{path}.family",
+                f"must agree with every row for policy {policy_name!r}",
+            )
         cost = _number(row["scoring_cost"], f"{path}.scoring_cost")
         if cost not in learned_by_cost:
             _invalid(f"{path}.scoring_cost", "must be one of payload.costs")
@@ -331,6 +445,112 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
                 "payload.rows",
                 f"must contain exactly one offline-rl policy at evaluated cost {cost:g}",
             )
+    raw_policy_outcomes = _list(root["policy_outcomes"], "payload.policy_outcomes")
+    if len(raw_policy_outcomes) != len(policy_families):
+        _invalid(
+            "payload.policy_outcomes",
+            "must contain exactly one entry for every unique policy",
+        )
+    policy_outcomes_by_name: dict[str, dict[str, Any]] = {}
+    common_uids: list[str] | None = None
+    for index, raw_policy_outcome in enumerate(raw_policy_outcomes):
+        path = f"payload.policy_outcomes[{index}]"
+        outcome = _mapping(raw_policy_outcome, path)
+        _required(outcome, ("policy", "family", "uids", "correct", "samples", "tokens"), path)
+        policy_name = _string(outcome["policy"], f"{path}.policy")
+        family = _string(outcome["family"], f"{path}.family")
+        if policy_name in policy_outcomes_by_name:
+            _invalid(f"{path}.policy", "must be unique")
+        expected_family = policy_families.get(policy_name)
+        if expected_family is None:
+            _invalid(f"{path}.policy", "must name a policy in payload.rows")
+        if family != expected_family:
+            _invalid(f"{path}.family", "must agree with the policy family in payload.rows")
+        uids_raw = _list(outcome["uids"], f"{path}.uids")
+        correct_raw = _list(outcome["correct"], f"{path}.correct")
+        samples_raw = _list(outcome["samples"], f"{path}.samples")
+        tokens_raw = _list(outcome["tokens"], f"{path}.tokens")
+        for field, values in (
+            ("uids", uids_raw),
+            ("correct", correct_raw),
+            ("samples", samples_raw),
+            ("tokens", tokens_raw),
+        ):
+            if len(values) != records:
+                _invalid(f"{path}.{field}", f"must contain exactly {records} entries")
+        uids = [_string(uid, f"{path}.uids[{uid_index}]") for uid_index, uid in enumerate(uids_raw)]
+        if len(set(uids)) != records:
+            _invalid(f"{path}.uids", "must contain unique UIDs")
+        if common_uids is None:
+            common_uids = uids
+        elif uids != common_uids:
+            _invalid(f"{path}.uids", "must exactly match the common ordered UID array")
+        correct = np.asarray(
+            [
+                _boolean(value, f"{path}.correct[{value_index}]")
+                for value_index, value in enumerate(correct_raw)
+            ],
+            dtype=np.float64,
+        )
+        samples_values = [
+            _integer(value, f"{path}.samples[{value_index}]", minimum=1)
+            for value_index, value in enumerate(samples_raw)
+        ]
+        if any(value > max_samples for value in samples_values):
+            _invalid(f"{path}.samples", f"must contain values no greater than {max_samples}")
+        samples = np.asarray(samples_values, dtype=np.float64)
+        tokens = np.asarray(
+            [
+                _integer(value, f"{path}.tokens[{value_index}]", minimum=0)
+                for value_index, value in enumerate(tokens_raw)
+            ],
+            dtype=np.float64,
+        )
+        policy_outcomes_by_name[policy_name] = {
+            "family": family,
+            "uids": uids,
+            "correct": correct,
+            "samples": samples,
+            "tokens": tokens,
+        }
+    if set(policy_outcomes_by_name) != set(policy_families):
+        _invalid(
+            "payload.policy_outcomes",
+            "must contain exactly one entry for every unique policy and no extras",
+        )
+
+    bootstrap_indices = np.random.default_rng(bootstrap_seed).integers(
+        0,
+        records,
+        size=(resamples, records),
+    )
+    for policy_outcome in policy_outcomes_by_name.values():
+        policy_outcome["correct_estimates"] = _bootstrap_estimates(
+            policy_outcome["correct"],
+            bootstrap_indices,
+        )
+        policy_outcome["sample_estimates"] = _bootstrap_estimates(
+            policy_outcome["samples"],
+            bootstrap_indices,
+        )
+        policy_outcome["token_estimates"] = _bootstrap_estimates(
+            policy_outcome["tokens"],
+            bootstrap_indices,
+        )
+    for index, row in enumerate(full_rows):
+        policy_outcome = policy_outcomes_by_name[str(row["policy"])]
+        _validate_recomputed_row(
+            row,
+            f"payload.rows[{index}]",
+            cost=float(row["scoring_cost"]),
+            correct=policy_outcome["correct"],
+            samples=policy_outcome["samples"],
+            tokens=policy_outcome["tokens"],
+            max_samples=max_samples,
+            correct_estimates=policy_outcome["correct_estimates"],
+            sample_estimates=policy_outcome["sample_estimates"],
+            token_estimates=policy_outcome["token_estimates"],
+        )
 
     comparisons = _list(root["comparisons"], "payload.comparisons")
     comparisons_by_cost: dict[float, dict[str, Any]] = {}
@@ -409,6 +629,7 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
         normalized: dict[str, Any] = {
             "scoring_cost": cost,
             "uid": uid,
+            "path": path,
             "learned_policy": outcome["learned_policy"],
             "baseline_policy": outcome["baseline_policy"],
             "selection": outcome["selection"],
@@ -439,6 +660,9 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
             normalized[f"{prefix}_utility"] = utility
         outcomes_by_cost[cost].append(normalized)
 
+    if common_uids is None:
+        _invalid("payload.policy_outcomes", "must contain policy evidence")
+    common_uid_index = {uid: index for index, uid in enumerate(common_uids)}
     retained_uids: set[str] | None = None
     for cost in costs:
         cost_outcomes = outcomes_by_cost[cost]
@@ -448,59 +672,96 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
                 "payload.outcomes",
                 f"must contain exactly {records} unique UIDs at cost {cost:g}",
             )
+        if uids != set(common_uids):
+            _invalid(
+                "payload.outcomes",
+                "must retain exactly the UIDs in payload.policy_outcomes",
+            )
         if retained_uids is None:
             retained_uids = uids
         elif uids != retained_uids:
             _invalid("payload.outcomes", "must retain the same UID set at every cost")
         comparison = comparisons_by_cost[cost]
-        learned_path = (
-            f"payload.rows[{rows.index(rows_by_cost[cost][comparison['learned_policy']])}]"
-        )
-        baseline_path = (
-            f"payload.rows[{rows.index(rows_by_cost[cost][comparison['baseline_policy']])}]"
-        )
+        learned_policy = str(comparison["learned_policy"])
+        baseline_policy = str(comparison["baseline_policy"])
+        learned_evidence = policy_outcomes_by_name[learned_policy]
+        baseline_evidence = policy_outcomes_by_name[baseline_policy]
+        for outcome in cost_outcomes:
+            uid = str(outcome["uid"])
+            evidence_index = common_uid_index[uid]
+            for prefix, evidence in (
+                ("learned", learned_evidence),
+                ("baseline", baseline_evidence),
+            ):
+                expected_correct = bool(evidence["correct"][evidence_index])
+                expected_samples = int(evidence["samples"][evidence_index])
+                expected_tokens = int(evidence["tokens"][evidence_index])
+                if outcome[f"{prefix}_correct"] is not expected_correct:
+                    _invalid(
+                        "payload.outcomes",
+                        f"{prefix}_correct must match policy_outcomes for UID {uid!r}",
+                    )
+                if outcome[f"{prefix}_samples"] != expected_samples:
+                    _invalid(
+                        "payload.outcomes",
+                        f"{prefix}_samples must match policy_outcomes for UID {uid!r}",
+                    )
+                if outcome[f"{prefix}_tokens"] != expected_tokens:
+                    _invalid(
+                        "payload.outcomes",
+                        f"{prefix}_tokens must match policy_outcomes for UID {uid!r}",
+                    )
+                _expect_close(
+                    float(outcome[f"{prefix}_utility"]),
+                    float(expected_correct) - cost * (expected_samples - 1),
+                    f"{outcome['path']}.{prefix}_utility",
+                )
+
+        learned_path = f"payload.rows[{rows.index(rows_by_cost[cost][learned_policy])}]"
+        baseline_path = f"payload.rows[{rows.index(rows_by_cost[cost][baseline_policy])}]"
         _validate_selected_row_aggregate(
             cost_outcomes,
-            rows_by_cost[cost][comparison["learned_policy"]],
+            rows_by_cost[cost][learned_policy],
             "learned",
             learned_path,
             max_samples,
         )
         _validate_selected_row_aggregate(
             cost_outcomes,
-            rows_by_cost[cost][comparison["baseline_policy"]],
+            rows_by_cost[cost][baseline_policy],
             "baseline",
             baseline_path,
             max_samples,
         )
-        paired_fields = (
-            ("accuracy_delta", "correct"),
-            ("average_samples_delta", "samples"),
-            ("average_tokens_delta", "tokens"),
-            ("utility_delta", "utility"),
+
+        learned_correct = learned_evidence["correct"]
+        learned_samples = learned_evidence["samples"]
+        learned_tokens = learned_evidence["tokens"]
+        baseline_correct = baseline_evidence["correct"]
+        baseline_samples = baseline_evidence["samples"]
+        baseline_tokens = baseline_evidence["tokens"]
+        learned_utilities = learned_correct - cost * (learned_samples - 1.0)
+        baseline_utilities = baseline_correct - cost * (baseline_samples - 1.0)
+        paired_values = (
+            ("accuracy_delta", learned_correct, baseline_correct),
+            ("average_samples_delta", learned_samples, baseline_samples),
+            ("average_tokens_delta", learned_tokens, baseline_tokens),
+            ("utility_delta", learned_utilities, baseline_utilities),
         )
         comparison_index = comparisons.index(comparison)
-        for delta_field, outcome_field in paired_fields:
-            expected = _mean(
-                [
-                    float(outcome[f"learned_{outcome_field}"])
-                    - float(outcome[f"baseline_{outcome_field}"])
-                    for outcome in cost_outcomes
-                ]
+        for field, learned_values, baseline_values in paired_values:
+            path = f"payload.comparisons[{comparison_index}].{field}"
+            expected_point = float(np.mean(learned_values)) - float(np.mean(baseline_values))
+            _expect_close(float(comparison[field]), expected_point, path)
+            paired_estimates = _bootstrap_estimates(
+                learned_values - baseline_values,
+                bootstrap_indices,
             )
-            _expect_close(
-                float(comparison[delta_field]),
-                expected,
-                f"payload.comparisons[{comparison_index}].{delta_field}",
+            _expect_interval(
+                comparison[f"{field}_interval"],
+                _estimate_interval(paired_estimates),
+                f"{path}_interval",
             )
-
-    bootstrap = _mapping(root["bootstrap"], "payload.bootstrap")
-    _required(bootstrap, ("resamples", "seed", "confidence"), "payload.bootstrap")
-    _integer(bootstrap["resamples"], "payload.bootstrap.resamples", minimum=1)
-    _integer(bootstrap["seed"], "payload.bootstrap.seed")
-    confidence = _number(bootstrap["confidence"], "payload.bootstrap.confidence")
-    if not math.isclose(confidence, 0.95, rel_tol=0.0, abs_tol=1e-12):
-        _invalid("payload.bootstrap.confidence", "must equal 0.95 for this 95% evidence report")
 
     objective = _mapping(root["objective"], "payload.objective")
     _required(objective, ("name", "formula", "cost_unit"), "payload.objective")
@@ -592,43 +853,39 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
             )
 
     frontier = _list(root["pareto_frontier"], "payload.pareto_frontier")
-    if not frontier:
-        _invalid("payload.pareto_frontier", "must contain at least one operating point")
-    frontier_fields = (
-        "policy",
-        "family",
-        "scoring_cost",
-        "accuracy",
-        "average_samples",
-        "average_tokens",
-        "p50_samples",
-        "p90_samples",
-        "utility",
-    )
-    for index, raw_point in enumerate(frontier):
-        path = f"payload.pareto_frontier[{index}]"
-        point = _mapping(raw_point, path)
-        _required(point, frontier_fields, path)
-        policy_name = _string(point["policy"], f"{path}.policy")
-        family = _string(point["family"], f"{path}.family")
-        cost = _number(point["scoring_cost"], f"{path}.scoring_cost")
-        accuracy = _number(point["accuracy"], f"{path}.accuracy")
-        samples = _number(point["average_samples"], f"{path}.average_samples")
-        for field in ("average_tokens", "p50_samples", "p90_samples", "utility"):
-            _number(point[field], f"{path}.{field}")
-        matching = any(
-            str(row["policy"]) == policy_name
-            and str(row["family"]) == family
-            and math.isclose(float(row["accuracy"]), accuracy, rel_tol=0.0, abs_tol=1e-12)
-            and math.isclose(float(row["average_samples"]), samples, rel_tol=0.0, abs_tol=1e-12)
-            and math.isclose(float(row["scoring_cost"]), cost, rel_tol=0.0, abs_tol=1e-12)
-            for row in full_rows
+    unique_rows: dict[tuple[str, float, float], dict[str, Any]] = {}
+    for row in full_rows:
+        key = (
+            str(row["policy"]),
+            float(row["accuracy"]),
+            float(row["average_samples"]),
         )
-        if not matching:
-            _invalid(path, "must match a measured row so its uncertainty is available")
+        unique_rows[key] = row
+    candidates = list(unique_rows.values())
+    expected_frontier = [
+        row
+        for row in candidates
+        if not any(
+            float(other["accuracy"]) >= float(row["accuracy"])
+            and float(other["average_samples"]) <= float(row["average_samples"])
+            and (
+                float(other["accuracy"]) > float(row["accuracy"])
+                or float(other["average_samples"]) < float(row["average_samples"])
+            )
+            for other in candidates
+        )
+    ]
+    expected_frontier.sort(key=lambda row: (float(row["average_samples"]), float(row["accuracy"])))
+    if not _same_json(frontier, expected_frontier):
+        _invalid(
+            "payload.pareto_frontier",
+            "must exactly equal the complete recomputed Pareto frontier",
+        )
 
     protocol = root.get("protocol")
     if protocol is None:
+        if root["protocol_raw"] is not None:
+            _invalid("payload.protocol_raw", "must be null when payload.protocol is null")
         if root.get("protocol_snapshot") is not None:
             _invalid("payload.protocol_snapshot", "must be null when payload.protocol is null")
         if root.get("protocol_result") is not None:
@@ -642,12 +899,32 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
         "payload.protocol",
     )
     _string(protocol_mapping["path"], "payload.protocol.path")
-    _sha256(protocol_mapping["sha256"], "payload.protocol.sha256")
+    protocol_sha256 = _sha256(protocol_mapping["sha256"], "payload.protocol.sha256")
     _string(protocol_mapping["status"], "payload.protocol.status")
     _string(protocol_mapping["evidence_tier"], "payload.protocol.evidence_tier")
     if split not in {"validation", "test"}:
         _invalid("payload.data.split", "is required for a protocol-bound report")
     _required(root, ("protocol_snapshot", "protocol_result"), "payload")
+    protocol_raw = _string(root["protocol_raw"], "payload.protocol_raw")
+    try:
+        protocol_bytes = protocol_raw.encode("utf-8")
+    except UnicodeEncodeError:
+        _invalid("payload.protocol_raw", "must be valid UTF-8 text")
+    digest = hashlib.sha256(protocol_bytes).hexdigest()
+    if digest != protocol_sha256.lower():
+        _invalid("payload.protocol_raw", "SHA-256 must equal payload.protocol.sha256")
+    try:
+        parsed_protocol = json.loads(
+            protocol_raw,
+            parse_constant=_reject_nonfinite_json,
+        )
+    except (json.JSONDecodeError, ValueError):
+        _invalid("payload.protocol_raw", "must contain valid JSON")
+    if not _same_json(parsed_protocol, root["protocol_snapshot"]):
+        _invalid(
+            "payload.protocol_snapshot",
+            "must exactly equal the JSON parsed from payload.protocol_raw",
+        )
     snapshot = _mapping(root["protocol_snapshot"], "payload.protocol_snapshot")
     if snapshot.get("status") != protocol_mapping["status"]:
         _invalid("payload.protocol_snapshot.status", "must match payload.protocol.status")
@@ -760,7 +1037,7 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
         result["utility_delta_lower_bounds"],
         "payload.protocol_result.utility_delta_lower_bounds",
     )
-    expected_bound_keys = {f"{cost:g}" for cost in primary_costs}
+    expected_bound_keys = {repr(float(cost)) for cost in primary_costs}
     if set(lower_bounds) != expected_bound_keys:
         _invalid(
             "payload.protocol_result.utility_delta_lower_bounds",
@@ -768,7 +1045,7 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
         )
     recomputed_bounds: dict[float, float] = {}
     for cost in primary_costs:
-        key = f"{cost:g}"
+        key = repr(float(cost))
         reported_bound = _number(
             lower_bounds[key],
             f"payload.protocol_result.utility_delta_lower_bounds.{key}",

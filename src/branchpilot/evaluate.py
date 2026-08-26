@@ -12,7 +12,7 @@ from branchpilot.policy import BranchPilotPolicy, Decision
 from branchpilot.schema import Rollout
 
 StopRule = Callable[[Rollout], int]
-_CONFIDENCE = 0.95
+BOOTSTRAP_CONFIDENCE = 0.95
 CONFIDENCE_THRESHOLDS = (
     0.5,
     0.55,
@@ -148,6 +148,26 @@ class PairedOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class PolicyOutcomes:
+    policy: str
+    family: str
+    uids: tuple[str, ...]
+    correct: tuple[bool, ...]
+    samples: tuple[int, ...]
+    tokens: tuple[int, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "policy": self.policy,
+            "family": self.family,
+            "uids": list(self.uids),
+            "correct": list(self.correct),
+            "samples": list(self.samples),
+            "tokens": list(self.tokens),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class BenchmarkResult(Sequence[Metrics]):
     records: int
     max_samples: int
@@ -156,8 +176,9 @@ class BenchmarkResult(Sequence[Metrics]):
     comparisons: tuple[Comparison, ...]
     outcomes: tuple[PairedOutcome, ...]
     bootstrap_samples: int
+    policy_outcomes: tuple[PolicyOutcomes, ...]
     bootstrap_seed: int
-    confidence: float = _CONFIDENCE
+    confidence: float = BOOTSTRAP_CONFIDENCE
 
     def __iter__(self) -> Iterator[Metrics]:
         return iter(self.rows)
@@ -182,6 +203,7 @@ class BenchmarkResult(Sequence[Metrics]):
             "rows": [row.to_dict() for row in self.rows],
             "comparisons": [comparison.to_dict() for comparison in self.comparisons],
             "outcomes": [outcome.to_dict() for outcome in self.outcomes],
+            "policy_outcomes": [outcome.to_dict() for outcome in self.policy_outcomes],
             "bootstrap": {
                 "resamples": self.bootstrap_samples,
                 "seed": self.bootstrap_seed,
@@ -201,7 +223,7 @@ class _Measurement:
 
 def _bootstrap_interval(values: np.ndarray, bootstrap_indices: np.ndarray) -> Interval:
     estimates = np.mean(values[bootstrap_indices], axis=1)
-    tail = (1.0 - _CONFIDENCE) / 2.0
+    tail = (1.0 - BOOTSTRAP_CONFIDENCE) / 2.0
     lower, upper = np.quantile(estimates, (tail, 1.0 - tail))
     return Interval(float(lower), float(upper))
 
@@ -380,12 +402,13 @@ def benchmark(
     rows: list[Metrics] = []
     comparisons: list[Comparison] = []
     outcomes: list[PairedOutcome] = []
+    policy_outcomes: dict[str, PolicyOutcomes] = {}
 
     for cost in costs:
         learned = _measure(
             rollouts,
             learned_rule(policy, cost),
-            f"BranchPilot λ={cost:g}",
+            f"BranchPilot λ={cost!r}",
             "offline-rl",
             cost,
             bootstrap_indices,
@@ -446,6 +469,20 @@ def benchmark(
             selection = "validation-frozen"
 
         rows.extend(item.metrics for item in measured)
+        for measurement in measured:
+            compact = PolicyOutcomes(
+                policy=measurement.metrics.policy,
+                family=measurement.metrics.family,
+                uids=tuple(rollout.uid for rollout in rollouts),
+                correct=tuple(bool(value) for value in measurement.correct),
+                samples=tuple(int(value) for value in measurement.samples),
+                tokens=tuple(int(value) for value in measurement.tokens),
+            )
+            previous = policy_outcomes.setdefault(compact.policy, compact)
+            if previous != compact:
+                raise RuntimeError(
+                    f"policy {compact.policy!r} produced cost-dependent observable outcomes"
+                )
         comparisons.append(_comparison(learned, baseline, selection, bootstrap_indices))
         for index, rollout in enumerate(rollouts):
             outcomes.append(
@@ -473,6 +510,7 @@ def benchmark(
         rows=tuple(rows),
         comparisons=tuple(comparisons),
         outcomes=tuple(outcomes),
+        policy_outcomes=tuple(policy_outcomes.values()),
         bootstrap_samples=bootstrap_samples,
         bootstrap_seed=bootstrap_seed,
     )

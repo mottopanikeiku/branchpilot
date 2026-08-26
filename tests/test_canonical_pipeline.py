@@ -24,20 +24,24 @@ def _protocol(path: Path) -> Protocol:
             "model": "fixture/model",
             "model_revision": "fixture-model-revision",
             "runtime_image": "fixture/image@sha256:" + "3" * 64,
+            "runtime_overlay": "ln -sf /usr/bin/python3 /usr/bin/python",
         },
         "collection": {
             "train_records": 16,
             "validation_records": 8,
             "test_records": 8,
+            "test_split": "complete-official-test",
             "samples_per_prompt": 3,
             "max_completion_tokens": 512,
             "temperature": 0.7,
             "top_p": 0.95,
             "logprobs": 1,
             "sampling_seed": 17,
+            "selection": "seeded-shuffle-with-recorded-source-indices",
             "system_prompt_sha256": "4" * 64,
             "parser": "fixture-parser",
             "completed_output_fallback": "finish-reason-stop-only",
+            "truncated_outputs_vote": False,
         },
         "controller": {
             "algorithm": "exact-backward-q-regression-v1",
@@ -52,8 +56,12 @@ def _protocol(path: Path) -> Protocol:
         "evaluation": {
             "primary_costs": [0.05, 0.1, 0.2],
             "reported_costs": [0.05, 0.1, 0.2],
+            "objective": "accuracy - lambda * (samples - 1)",
+            "bootstrap_unit": "prompt",
             "bootstrap_resamples": 50,
             "bootstrap_seed": 17,
+            "confidence": 0.95,
+            "comparator_selection": "best-validation-utility-per-cost-frozen-before-test",
             "fixed_counts": [1, 2, 3],
             "confidence_thresholds": list(CONFIDENCE_THRESHOLDS),
             "agreement_streaks": list(AGREEMENT_STREAKS),
@@ -62,7 +70,11 @@ def _protocol(path: Path) -> Protocol:
             "success": (
                 "paired utility interval lower bound above zero at two or more primary costs "
                 "and nonnegative at the third"
-            )
+            ),
+            "failure_handling": (
+                "publish every result unchanged; do not retune, change seeds, "
+                "or regenerate the canonical bank"
+            ),
         },
         "limitations_declared_in_advance": ["fixture limitation"],
     }
@@ -85,6 +97,8 @@ def _manifest(path: Path, protocol: Protocol, artifacts: dict[str, Path]) -> Non
             "id": scope["dataset"],
             "config": scope["dataset_config"],
             "revision": scope["dataset_revision"],
+            "selection": collection["selection"],
+            "test_split": collection["test_split"],
             "source_files": {
                 "train": {"sha256": scope["dataset_train_sha256"]},
                 "test": {"sha256": scope["dataset_test_sha256"]},
@@ -103,8 +117,12 @@ def _manifest(path: Path, protocol: Protocol, artifacts: dict[str, Path]) -> Non
             "sha256": collection["system_prompt_sha256"],
             "parser": collection["parser"],
             "completed_output_fallback": collection["completed_output_fallback"],
+            "truncated_outputs_vote": collection["truncated_outputs_vote"],
         },
-        "runtime": {"image": scope["runtime_image"]},
+        "runtime": {
+            "image": scope["runtime_image"],
+            "overlay": scope["runtime_overlay"],
+        },
         "splits": {
             "train": {"records": collection["train_records"]},
             "validation": {"records": collection["validation_records"]},

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import math
 from collections.abc import Iterable, Iterator
@@ -125,6 +126,30 @@ class Rollout:
         )
 
 
+def _parse_jsonl(lines: Iterable[str], source: str) -> Iterator[Rollout]:
+    for line_number, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+            if not isinstance(payload, dict):
+                raise TypeError("record must be a JSON object")
+            yield Rollout.from_dict(payload)
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError(f"invalid rollout at {source}:{line_number}: {exc}") from exc
+
+
+def read_jsonl_bytes(payload: bytes, source: str = "<bytes>") -> list[Rollout]:
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"invalid UTF-8 rollout data at {source}") from exc
+    records = list(_parse_jsonl(io.StringIO(text), source))
+    if not records:
+        raise ValueError(f"no rollouts found in {source}")
+    return records
+
+
 def read_jsonl(path: str | Path) -> list[Rollout]:
     records = list(iter_jsonl(path))
     if not records:
@@ -141,13 +166,4 @@ def write_jsonl(path: str | Path, records: Iterable[Rollout]) -> None:
 
 def iter_jsonl(path: str | Path) -> Iterator[Rollout]:
     with Path(path).open(encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, start=1):
-            if not line.strip():
-                continue
-            try:
-                payload = json.loads(line)
-                if not isinstance(payload, dict):
-                    raise TypeError("record must be a JSON object")
-                yield Rollout.from_dict(payload)
-            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-                raise ValueError(f"invalid rollout at {path}:{line_number}: {exc}") from exc
+        yield from _parse_jsonl(handle, str(path))
