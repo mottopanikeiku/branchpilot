@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "Questions and support"
+    url: "https://github.com/mottopanikeiku/branchpilot/discussions"
+    about: "Ask usage and support questions in Discussions."
+  - name: "Design discussion"
+    url: "https://github.com/mottopanikeiku/branchpilot/discussions"
+    about: "Discuss broad or exploratory designs before proposing a scoped feature."
+  - name: "Private vulnerability report"
+    url: "https://github.com/mottopanikeiku/branchpilot/security/advisories/new"
+    about: "Privately report a suspected security vulnerability."

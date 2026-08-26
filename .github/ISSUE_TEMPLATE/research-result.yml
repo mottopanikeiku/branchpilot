@@ -1,0 +1,88 @@
+name: "Research result"
+description: "Report a reproducible, fully disclosed research result."
+title: "[Research]: "
+labels:
+  - "research"
+assignees:
+  - "mottopanikeiku"
+body:
+  - type: textarea
+    id: result
+    attributes:
+      label: "Claim and observable result"
+      description: "State the question, claim, measured outcome, and practical relevance without relying on selected examples alone."
+    validations:
+      required: true
+  - type: textarea
+    id: immutable-identifiers
+    attributes:
+      label: "Immutable identifiers"
+      description: "Identify code by commit SHA, data by version and digest or immutable snapshot, model artifacts by revision and digest, and the protocol by registration, version, or digest."
+      placeholder: |
+        Code commit SHA:
+        Data version and digest:
+        Model revision and digest:
+        Protocol identifier and version:
+    validations:
+      required: true
+  - type: textarea
+    id: protocol
+    attributes:
+      label: "Protocol and reproduction"
+      description: "Give the exact commands, environment, seeds, dependencies, metrics, and protocol needed to reproduce the result. Redact credentials and private data."
+    validations:
+      required: true
+  - type: textarea
+    id: data-separation
+    attributes:
+      label: "Train, selection, and test separation"
+      description: "Define the train, validation or selection, and final test sets; explain boundaries, reuse, leakage controls, and when the test set was accessed."
+    validations:
+      required: true
+  - type: textarea
+    id: selection-disclosure
+    attributes:
+      label: "Selection disclosure"
+      description: "List every candidate, benchmark, metric, seed, checkpoint, prompt, and run considered for selection, plus selection criteria, stopping rule, and any post-hoc choices."
+    validations:
+      required: true
+  - type: textarea
+    id: complete-results
+    attributes:
+      label: "Complete results"
+      description: "Report all selected and unselected results in a complete table, including every candidate, seed, run, benchmark, and metric. Do not report only favorable benchmarks or runs."
+    validations:
+      required: true
+  - type: textarea
+    id: uncertainty
+    attributes:
+      label: "Uncertainty"
+      description: "Give sample counts, variance or intervals, estimation method, and assumptions for every reported aggregate."
+    validations:
+      required: true
+  - type: textarea
+    id: failures-nulls
+    attributes:
+      label: "Failures and null results"
+      description: "Report failed, aborted, excluded, missing, and null runs with reasons. State explicitly if there were none."
+    validations:
+      required: true
+  - type: textarea
+    id: costs
+    attributes:
+      label: "Costs with units"
+      description: "Report compute, elapsed time, API or service use, and human effort with explicit units; state zero or not applicable where appropriate."
+      placeholder: "GPU-hours, CPU-hours, wall-clock hours, tokens, requests, currency, person-hours"
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: "Reporting confirmations"
+      options:
+        - label: "I included complete selected, unselected, failed, and null results rather than cherry-picking benchmarks, metrics, seeds, or runs."
+          required: true
+        - label: "I disclosed all selection inputs, criteria, stopping rules, and post-hoc choices."
+          required: true
+        - label: "I removed secrets, tokens, credentials, and private data from text, commands, data, and attachments."
+          required: true

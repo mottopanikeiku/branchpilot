@@ -1,0 +1,57 @@
+name: "Feature request"
+description: "Propose a scoped, observable product change."
+title: "[Feature]: "
+labels:
+  - "enhancement"
+assignees:
+  - "mottopanikeiku"
+body:
+  - type: textarea
+    id: user-problem
+    attributes:
+      label: "User problem"
+      description: "Describe who is blocked, what they are trying to do, and evidence that the problem exists. Broad solution-first requests without a concrete user problem are not accepted; use Discussions for exploratory design."
+      placeholder: "When ..., a ... user cannot ..., which causes ..."
+    validations:
+      required: true
+  - type: textarea
+    id: observable-contract
+    attributes:
+      label: "Observable contract"
+      description: "State the externally observable behavior that would solve the problem, including inputs, outputs, errors, and boundaries."
+      placeholder: |
+        Given ...
+        When ...
+        Then ...
+    validations:
+      required: true
+  - type: textarea
+    id: current-behavior
+    attributes:
+      label: "Current behavior and reproduction"
+      description: "Give a minimal example or exact command showing the current behavior. Redact secrets and private data."
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: "Scope and constraints"
+      description: "Identify affected workflows, compatibility constraints, and behavior that must not change."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: "Possible implementation"
+      description: "Optional: suggest an implementation only after defining the problem and contract above."
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: "Confirmations"
+      options:
+        - label: "This is a scoped request with a concrete user problem and testable observable contract, not a broad solution-first design request."
+          required: true
+        - label: "I removed secrets, tokens, credentials, and private data from examples and attachments."
+          required: true

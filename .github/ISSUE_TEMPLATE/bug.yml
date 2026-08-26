@@ -1,0 +1,103 @@
+name: "Bug report"
+description: "Report a reproducible problem in BranchPilot."
+title: "[Bug]: "
+labels:
+  - "bug"
+assignees:
+  - "mottopanikeiku"
+body:
+  - type: input
+    id: version
+    attributes:
+      label: "BranchPilot version"
+      description: "Give the exact release, commit SHA, or image digest."
+      placeholder: "v1.2.3, commit SHA, or sha256:..."
+    validations:
+      required: true
+  - type: dropdown
+    id: install-path
+    attributes:
+      label: "Installation path"
+      description: "How was this copy installed?"
+      options:
+        - "PyPI"
+        - "pipx"
+        - "Source checkout"
+        - "Container image"
+        - "Other"
+    validations:
+      required: true
+  - type: input
+    id: install-details
+    attributes:
+      label: "Installation details"
+      description: "Include the relevant package source, command, commit, image, or other detail."
+      placeholder: "pipx install branchpilot; source commit ..."
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: "Python version"
+      description: "Give the full Python version."
+      placeholder: "Python 3.13.5"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: "Operating system"
+      description: "Give the OS, release, and architecture."
+      placeholder: "Fedora 44, x86_64"
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: "Exact command"
+      description: "Paste the exact command that triggers the problem. Redact credentials and private paths."
+      render: "shell"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: "Minimal reproduction"
+      description: "List the smallest complete setup and steps that reproduce the problem."
+      placeholder: |
+        1. Create ...
+        2. Configure ...
+        3. Run the command above.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Expected behavior"
+      description: "State the observable result you expected."
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: "Actual behavior"
+      description: "State the observable result, including exit status when relevant."
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Redacted logs"
+      description: "Paste the complete relevant output. Replace secrets, tokens, credentials, and private data before submitting."
+      render: "text"
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: "Confirmations"
+      options:
+        - label: "I reproduced this with the latest available BranchPilot version."
+          required: true
+        - label: "I removed secrets, tokens, credentials, and private data from commands, logs, and attachments."
+          required: true
