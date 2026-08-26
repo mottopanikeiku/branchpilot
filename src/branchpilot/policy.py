@@ -20,7 +20,9 @@ from branchpilot.schema import Rollout, Sample
 ARTIFACT_VERSION = 3
 ARCHITECTURE = "mlp-layernorm-silu-v1"
 COST_MODEL = "additional-samples-v1"
+TRAINING_ALGORITHM = "exact-backward-q-regression-v1"
 MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
+MAX_COSTS = 256
 MAX_HIDDEN_SIZE = 4096
 MAX_SAMPLES = 1024
 _LAYER_NORM_EPSILON = np.float32(1e-5)
@@ -87,6 +89,8 @@ def _positive_metadata_int(metadata: Mapping[str, str], key: str, maximum: int) 
 
 def _validated_costs(values: Sequence[float]) -> tuple[float, ...]:
     costs = tuple(float(value) for value in values)
+    if len(costs) > MAX_COSTS:
+        raise ValueError(f"policy costs cannot exceed {MAX_COSTS} entries")
     if not costs or any(not math.isfinite(cost) or cost < 0 for cost in costs):
         raise ValueError("policy costs must be a non-empty finite non-negative sequence")
     if any(left >= right for left, right in pairwise(costs)):
@@ -187,6 +191,13 @@ class BranchPilotPolicy:
         """Return a defensive copy of the artifact's training provenance."""
         return json.loads(json.dumps(self._training, sort_keys=True))
 
+    def _validate_cost(self, cost: float) -> None:
+        if not math.isfinite(cost) or cost < self.costs[0] or cost > self.costs[-1]:
+            raise ValueError(
+                f"cost must be finite and within the trained range "
+                f"[{self.costs[0]:g}, {self.costs[-1]:g}]"
+            )
+
     def _model_input(
         self,
         features: np.ndarray,
@@ -196,12 +207,7 @@ class BranchPilotPolicy:
         features = np.asarray(features, dtype=np.float32)
         if features.shape != (len(FEATURE_NAMES),) or not np.isfinite(features).all():
             raise ValueError("features must be a finite BranchPilot state vector")
-        if not math.isfinite(cost) or cost < 0:
-            raise ValueError("cost must be finite and non-negative")
-        if cost < self.costs[0] or cost > self.costs[-1]:
-            raise ValueError(
-                f"cost must be within the trained range [{self.costs[0]:g}, {self.costs[-1]:g}]"
-            )
+        self._validate_cost(cost)
         if (
             not math.isfinite(remaining_samples)
             or remaining_samples < 0
@@ -241,11 +247,7 @@ class BranchPilotPolicy:
         cost: float,
         remaining_samples: float | None = None,
     ) -> tuple[float, float]:
-        if not math.isfinite(cost) or cost < self.costs[0] or cost > self.costs[-1]:
-            raise ValueError(
-                f"cost must be finite and within the trained range "
-                f"[{self.costs[0]:g}, {self.costs[-1]:g}]"
-            )
+        self._validate_cost(cost)
         if remaining_samples is None:
             progress = float(features[0])
             remaining_samples = max(0.0, (1.0 - progress) * self.max_samples)
@@ -312,6 +314,8 @@ class BranchPilotPolicy:
     ):
         """Create a label-free incremental inference session."""
         from branchpilot.runtime import PilotSession
+
+        self._validate_cost(cost)
 
         return PilotSession(
             self,

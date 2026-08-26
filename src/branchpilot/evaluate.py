@@ -13,7 +13,7 @@ from branchpilot.schema import Rollout
 
 StopRule = Callable[[Rollout], int]
 _CONFIDENCE = 0.95
-_CONFIDENCE_THRESHOLDS = (
+CONFIDENCE_THRESHOLDS = (
     0.5,
     0.55,
     0.6,
@@ -27,6 +27,7 @@ _CONFIDENCE_THRESHOLDS = (
     0.95,
     1.0,
 )
+AGREEMENT_STREAKS = (2, 3)
 
 
 @dataclass(frozen=True, slots=True)
@@ -403,7 +404,7 @@ def benchmark(
                     policy.max_samples,
                 )
             )
-        for threshold in _CONFIDENCE_THRESHOLDS:
+        for threshold in CONFIDENCE_THRESHOLDS:
             measured.append(
                 _measure(
                     rollouts,
@@ -415,7 +416,7 @@ def benchmark(
                     policy.max_samples,
                 )
             )
-        for streak in (2, 3):
+        for streak in AGREEMENT_STREAKS:
             measured.append(
                 _measure(
                     rollouts,

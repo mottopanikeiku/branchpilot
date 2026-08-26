@@ -7,7 +7,7 @@ from safetensors import safe_open
 from safetensors.numpy import save_file
 
 from branchpilot.evaluate import benchmark
-from branchpilot.policy import MAX_HIDDEN_SIZE, BranchPilotPolicy
+from branchpilot.policy import MAX_COSTS, MAX_HIDDEN_SIZE, MAX_SAMPLES, BranchPilotPolicy
 from branchpilot.schema import Rollout
 from branchpilot.synthetic import make_synthetic_rollouts
 from branchpilot.training import TrainConfig, _exact_q_targets, train_policy
@@ -112,12 +112,27 @@ def test_non_finite_and_out_of_range_costs_are_rejected(
         policy.run(test[0], float("nan"))
     with pytest.raises(ValueError, match="trained range"):
         policy.run(test[0], 0.5)
+    with pytest.raises(ValueError, match="trained range"):
+        policy.start(test[0].question, 0.5)
 
 
 def test_zero_epoch_training_is_rejected() -> None:
     records = make_synthetic_rollouts(2)
     with pytest.raises(ValueError, match="epochs"):
         train_policy(records, TrainConfig(epochs=0))
+
+
+@pytest.mark.parametrize(
+    "config",
+    (
+        TrainConfig(hidden_size=MAX_HIDDEN_SIZE + 1),
+        TrainConfig(max_samples=MAX_SAMPLES + 1),
+        TrainConfig(costs=tuple(float(index) for index in range(MAX_COSTS + 1))),
+    ),
+)
+def test_training_rejects_resource_bounds_before_allocation(config: TrainConfig) -> None:
+    with pytest.raises(ValueError, match="must be in|cannot exceed"):
+        train_policy(make_synthetic_rollouts(2), config)
 
 
 def test_exact_targets_match_hand_calculated_backward_induction() -> None:

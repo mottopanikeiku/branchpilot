@@ -310,6 +310,24 @@ def test_length_truncation_never_calls_extractor_or_contributes_an_answer() -> N
     assert sample.mean_logprob == -0.25
 
 
+@pytest.mark.parametrize("finish_reason", (None, "content_filter", "tool_calls", "aborted"))
+def test_abnormal_finish_reasons_never_vote(finish_reason: str | None) -> None:
+    extracted: list[str] = []
+    sampler = OpenAIChatSampler(
+        FakeClient([make_response("partial #### 42", finish_reason=finish_reason)]),
+        "model",
+        [],
+        lambda text: extracted.append(text) or "42",
+    )
+
+    sample = asyncio.run(sampler(1))
+
+    assert extracted == []
+    assert sample.answer is None
+    assert sample.parse_status == "incomplete"
+    assert sample.finish_reason == finish_reason
+
+
 @pytest.mark.parametrize("reserved", ["model", "messages", "n", "stream"])
 def test_reserved_request_options_are_rejected(reserved: str) -> None:
     with pytest.raises(ValueError, match=reserved):

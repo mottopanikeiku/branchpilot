@@ -11,7 +11,7 @@ from branchpilot.artifacts import atomic_text_writer
 
 SCHEMA_VERSION = 2
 _PARSE_STATUSES = frozenset(
-    {"parsed", "parsed_explicit", "parsed_fallback", "unparsed", "truncated"}
+    {"incomplete", "parsed", "parsed_explicit", "parsed_fallback", "unparsed", "truncated"}
 )
 
 
@@ -48,9 +48,13 @@ class Sample:
         if (
             self.parse_status is not None
             and self.parse_status.startswith("parsed")
-            and self.answer is None
+            and not self.answer
         ):
-            raise ValueError("a parsed sample must have an answer")
+            raise ValueError("a parsed sample must have a non-empty answer")
+        if self.parse_status in {"incomplete", "truncated", "unparsed"} and self.answer is not None:
+            raise ValueError(f"a {self.parse_status} sample cannot have an answer")
+        if self.finish_reason == "length" and self.parse_status not in {None, "truncated"}:
+            raise ValueError("a length-finished sample must be marked truncated")
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> Sample:

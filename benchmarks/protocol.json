@@ -3,11 +3,14 @@
   "status": "frozen-before-canonical-generation",
   "evidence_tier": "scoped-single-model-single-task",
   "scope": {
-    "dataset": "openai/gsm8k",
+    "dataset": "openai/grade-school-math",
     "dataset_config": "main",
-    "dataset_revision": "740312add88f781978c0658806c59bc2815b9866",
+    "dataset_revision": "3101c7d5072418e28b9008a6636bde82a006892c",
+    "dataset_train_sha256": "17f347dc51477c50d4efb83959dbb7c56297aba886e5544ee2aaed3024813465",
+    "dataset_test_sha256": "3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14",
     "model": "Qwen/Qwen2.5-1.5B-Instruct",
-    "model_revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306"
+    "model_revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+    "runtime_image": "vllm/vllm-openai:v0.10.2@sha256:607442e407b0fea97f8a132a78b787c121a996dd4de181fa08e8da06e71ec2db"
   },
   "collection": {
     "train_records": 1600,
@@ -23,7 +26,7 @@
     "selection": "seeded-shuffle-with-recorded-source-indices",
     "system_prompt_sha256": "6d075970b7cfc84f7724849dbdb629c4d14aafc1a4e57d52517fbe4b338fc280",
     "parser": "branchpilot.numeric-complete-v3",
-    "completed_output_fallback": "last-numeric-only-when-finish-reason-is-not-length",
+    "completed_output_fallback": "last-numeric-only-when-finish-reason-is-stop",
     "truncated_outputs_vote": false
   },
   "controller": {

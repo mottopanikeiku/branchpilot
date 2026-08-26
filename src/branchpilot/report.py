@@ -61,6 +61,27 @@ _REQUIRED_COMPARISON_FIELDS = (
     "utility_delta_interval",
 )
 
+_REQUIRED_OUTCOME_FIELDS = (
+    "scoring_cost",
+    "uid",
+    "learned_policy",
+    "learned_correct",
+    "learned_samples",
+    "learned_tokens",
+    "learned_utility",
+    "baseline_policy",
+    "baseline_correct",
+    "baseline_samples",
+    "baseline_tokens",
+    "baseline_utility",
+    "selection",
+)
+_SUCCESS_RULE = (
+    "paired utility interval lower bound above zero at two or more primary costs "
+    "and nonnegative at the third"
+)
+_NUMERIC_TOLERANCE = 1e-10
+
 
 def _invalid(path: str, message: str) -> None:
     raise ValueError(f"invalid BranchPilot benchmark schema v2: {path} {message}")
@@ -124,6 +145,81 @@ def _sha256(value: Any, path: str) -> str:
     return digest
 
 
+def _boolean(value: Any, path: str) -> bool:
+    if not isinstance(value, bool):
+        _invalid(path, "must be a boolean")
+    return value
+
+
+def _expect_close(actual: float, expected: float, path: str) -> None:
+    if not math.isclose(
+        actual,
+        expected,
+        rel_tol=_NUMERIC_TOLERANCE,
+        abs_tol=_NUMERIC_TOLERANCE,
+    ):
+        _invalid(path, f"must equal the recomputed evidence value ({expected:.17g})")
+
+
+def _mean(values: list[float]) -> float:
+    return math.fsum(values) / len(values)
+
+
+def _quantile(values: list[int], probability: float) -> float:
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * probability
+    lower_index = math.floor(position)
+    upper_index = math.ceil(position)
+    if lower_index == upper_index:
+        return float(ordered[lower_index])
+    fraction = position - lower_index
+    return ordered[lower_index] + fraction * (ordered[upper_index] - ordered[lower_index])
+
+
+def _artifact_metadata(value: Any, path: str) -> dict[str, Any]:
+    metadata = _mapping(value, path)
+    _required(metadata, ("path", "bytes", "sha256"), path)
+    _string(metadata["path"], f"{path}.path")
+    _integer(metadata["bytes"], f"{path}.bytes", minimum=0)
+    _sha256(metadata["sha256"], f"{path}.sha256")
+    return metadata
+
+
+def _same_json(left: Any, right: Any) -> bool:
+    return json.dumps(left, sort_keys=True, separators=(",", ":")) == json.dumps(
+        right,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _validate_selected_row_aggregate(
+    outcomes: list[dict[str, Any]],
+    row: dict[str, Any],
+    prefix: str,
+    path: str,
+    max_samples: int,
+) -> None:
+    correct = [float(outcome[f"{prefix}_correct"]) for outcome in outcomes]
+    samples = [int(outcome[f"{prefix}_samples"]) for outcome in outcomes]
+    tokens = [float(outcome[f"{prefix}_tokens"]) for outcome in outcomes]
+    utilities = [float(outcome[f"{prefix}_utility"]) for outcome in outcomes]
+    for field, expected in (
+        ("accuracy", _mean(correct)),
+        ("average_samples", _mean([float(value) for value in samples])),
+        ("average_tokens", _mean(tokens)),
+        ("utility", _mean(utilities)),
+        ("p50_samples", _quantile(samples, 0.5)),
+        ("p90_samples", _quantile(samples, 0.9)),
+    ):
+        _expect_close(float(row[field]), expected, f"{path}.{field}")
+    histogram = [0] * max_samples
+    for sample_count in samples:
+        histogram[sample_count - 1] += 1
+    if row["stop_histogram"] != histogram:
+        _invalid(f"{path}.stop_histogram", "must match retained outcome sample counts")
+
+
 def _validate_payload(payload: Any) -> dict[str, Any]:
     root = _mapping(payload, "payload")
     required = (
@@ -133,6 +229,7 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
         "costs",
         "rows",
         "comparisons",
+        "outcomes",
         "bootstrap",
         "objective",
         "data",
@@ -149,6 +246,8 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
     if not raw_costs:
         _invalid("payload.costs", "must contain at least one evaluated cost")
     costs = [_number(value, f"payload.costs[{index}]") for index, value in enumerate(raw_costs)]
+    if any(cost < 0.0 for cost in costs):
+        _invalid("payload.costs", "must contain only non-negative costs")
     if len(set(costs)) != len(costs):
         _invalid("payload.costs", "must not contain duplicate costs")
 
@@ -157,12 +256,13 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
         _invalid("payload.rows", "must contain measured policies")
     learned_by_cost: dict[float, list[str]] = {cost: [] for cost in costs}
     policies_by_cost: dict[float, dict[str, str]] = {cost: {} for cost in costs}
+    rows_by_cost: dict[float, dict[str, dict[str, Any]]] = {cost: {} for cost in costs}
     full_rows: list[dict[str, Any]] = []
     for index, raw_row in enumerate(rows):
         path = f"payload.rows[{index}]"
         row = _mapping(raw_row, path)
         _required(row, _REQUIRED_ROW_FIELDS, path)
-        policy = _string(row["policy"], f"{path}.policy")
+        policy_name = _string(row["policy"], f"{path}.policy")
         family = _string(row["family"], f"{path}.family")
         cost = _number(row["scoring_cost"], f"{path}.scoring_cost")
         if cost not in learned_by_cost:
@@ -194,9 +294,16 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
         )
         if token_lower < 0.0:
             _invalid(f"{path}.average_tokens_interval", "must be non-negative")
-        _number(row["p50_samples"], f"{path}.p50_samples")
-        _number(row["p90_samples"], f"{path}.p90_samples")
-        _number(row["utility"], f"{path}.utility")
+        for field in ("p50_samples", "p90_samples"):
+            percentile = _number(row[field], f"{path}.{field}")
+            if percentile < 1.0 or percentile > max_samples:
+                _invalid(f"{path}.{field}", f"must be in [1, {max_samples}]")
+        utility = _number(row["utility"], f"{path}.utility")
+        _expect_close(
+            utility,
+            accuracy - cost * (average_samples - 1.0),
+            f"{path}.utility",
+        )
         _interval(row["utility_interval"], f"{path}.utility_interval")
         histogram = _list(row["stop_histogram"], f"{path}.stop_histogram")
         if len(histogram) != max_samples:
@@ -210,22 +317,23 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
         ]
         if sum(counts) != records:
             _invalid(f"{path}.stop_histogram", f"must sum to payload.records ({records})")
-        if policy in policies_by_cost[cost] and policies_by_cost[cost][policy] != family:
-            _invalid(f"{path}.policy", "cannot identify more than one family at the same cost")
-        policies_by_cost[cost][policy] = family
+        if policy_name in policies_by_cost[cost]:
+            _invalid(f"{path}.policy", "must be unique at the same evaluated cost")
+        policies_by_cost[cost][policy_name] = family
+        rows_by_cost[cost][policy_name] = row
         if family == "offline-rl":
-            learned_by_cost[cost].append(policy)
+            learned_by_cost[cost].append(policy_name)
         full_rows.append(row)
 
-    for cost, policies in learned_by_cost.items():
-        if len(policies) != 1:
+    for cost, policy_names in learned_by_cost.items():
+        if len(policy_names) != 1:
             _invalid(
                 "payload.rows",
                 f"must contain exactly one offline-rl policy at evaluated cost {cost:g}",
             )
 
     comparisons = _list(root["comparisons"], "payload.comparisons")
-    comparison_costs: set[float] = set()
+    comparisons_by_cost: dict[float, dict[str, Any]] = {}
     for index, raw_comparison in enumerate(comparisons):
         path = f"payload.comparisons[{index}]"
         comparison = _mapping(raw_comparison, path)
@@ -233,9 +341,8 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
         cost = _number(comparison["scoring_cost"], f"{path}.scoring_cost")
         if cost not in policies_by_cost:
             _invalid(f"{path}.scoring_cost", "must be one of payload.costs")
-        if cost in comparison_costs:
+        if cost in comparisons_by_cost:
             _invalid(f"{path}.scoring_cost", "must have exactly one paired comparison per cost")
-        comparison_costs.add(cost)
         learned_policy = _string(comparison["learned_policy"], f"{path}.learned_policy")
         baseline_policy = _string(comparison["baseline_policy"], f"{path}.baseline_policy")
         _string(comparison["selection"], f"{path}.selection")
@@ -244,18 +351,148 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
         baseline_family = policies_by_cost[cost].get(baseline_policy)
         if baseline_family is None or baseline_family == "offline-rl":
             _invalid(f"{path}.baseline_policy", "must name a non-learned row at the same cost")
-        for field in (
-            "accuracy_delta",
-            "average_samples_delta",
-            "average_tokens_delta",
-            "utility_delta",
-        ):
-            _number(comparison[field], f"{path}.{field}")
-            _interval(comparison[f"{field}_interval"], f"{path}.{field}_interval")
-    missing_comparisons = [cost for cost in costs if cost not in comparison_costs]
+        learned_row = rows_by_cost[cost][learned_policy]
+        baseline_row = rows_by_cost[cost][baseline_policy]
+        delta_fields = (
+            ("accuracy_delta", "accuracy"),
+            ("average_samples_delta", "average_samples"),
+            ("average_tokens_delta", "average_tokens"),
+            ("utility_delta", "utility"),
+        )
+        parsed_deltas: dict[str, float] = {}
+        for delta_field, row_field in delta_fields:
+            delta = _number(comparison[delta_field], f"{path}.{delta_field}")
+            parsed_deltas[delta_field] = delta
+            _interval(comparison[f"{delta_field}_interval"], f"{path}.{delta_field}_interval")
+            _expect_close(
+                delta,
+                float(learned_row[row_field]) - float(baseline_row[row_field]),
+                f"{path}.{delta_field}",
+            )
+        _expect_close(
+            parsed_deltas["utility_delta"],
+            parsed_deltas["accuracy_delta"] - cost * parsed_deltas["average_samples_delta"],
+            f"{path}.utility_delta",
+        )
+        comparisons_by_cost[cost] = comparison
+    missing_comparisons = [cost for cost in costs if cost not in comparisons_by_cost]
     if missing_comparisons:
         formatted = ", ".join(f"{cost:g}" for cost in missing_comparisons)
         _invalid("payload.comparisons", f"is missing evaluated costs: {formatted}")
+
+    raw_outcomes = _list(root["outcomes"], "payload.outcomes")
+    expected_outcomes = records * len(costs)
+    if len(raw_outcomes) != expected_outcomes:
+        _invalid(
+            "payload.outcomes",
+            f"must contain exactly payload.records × evaluated costs ({expected_outcomes}) pairs",
+        )
+    outcomes_by_cost: dict[float, list[dict[str, Any]]] = {cost: [] for cost in costs}
+    seen_pairs: set[tuple[float, str]] = set()
+    for index, raw_outcome in enumerate(raw_outcomes):
+        path = f"payload.outcomes[{index}]"
+        outcome = _mapping(raw_outcome, path)
+        _required(outcome, _REQUIRED_OUTCOME_FIELDS, path)
+        cost = _number(outcome["scoring_cost"], f"{path}.scoring_cost")
+        if cost not in comparisons_by_cost:
+            _invalid(f"{path}.scoring_cost", "must be one of payload.costs")
+        uid = _string(outcome["uid"], f"{path}.uid")
+        pair = (cost, uid)
+        if pair in seen_pairs:
+            _invalid(path, "duplicates an existing (scoring_cost, uid) pair")
+        seen_pairs.add(pair)
+        comparison = comparisons_by_cost[cost]
+        for field in ("learned_policy", "baseline_policy", "selection"):
+            value = _string(outcome[field], f"{path}.{field}")
+            if value != comparison[field]:
+                _invalid(f"{path}.{field}", f"must exactly match the comparison at cost {cost:g}")
+        normalized: dict[str, Any] = {
+            "scoring_cost": cost,
+            "uid": uid,
+            "learned_policy": outcome["learned_policy"],
+            "baseline_policy": outcome["baseline_policy"],
+            "selection": outcome["selection"],
+        }
+        for prefix in ("learned", "baseline"):
+            correct = _boolean(outcome[f"{prefix}_correct"], f"{path}.{prefix}_correct")
+            samples = _integer(
+                outcome[f"{prefix}_samples"],
+                f"{path}.{prefix}_samples",
+                minimum=1,
+            )
+            if samples > max_samples:
+                _invalid(f"{path}.{prefix}_samples", f"must be at most {max_samples}")
+            tokens = _integer(
+                outcome[f"{prefix}_tokens"],
+                f"{path}.{prefix}_tokens",
+                minimum=0,
+            )
+            utility = _number(outcome[f"{prefix}_utility"], f"{path}.{prefix}_utility")
+            _expect_close(
+                utility,
+                float(correct) - cost * (samples - 1),
+                f"{path}.{prefix}_utility",
+            )
+            normalized[f"{prefix}_correct"] = correct
+            normalized[f"{prefix}_samples"] = samples
+            normalized[f"{prefix}_tokens"] = tokens
+            normalized[f"{prefix}_utility"] = utility
+        outcomes_by_cost[cost].append(normalized)
+
+    retained_uids: set[str] | None = None
+    for cost in costs:
+        cost_outcomes = outcomes_by_cost[cost]
+        uids = {str(outcome["uid"]) for outcome in cost_outcomes}
+        if len(cost_outcomes) != records or len(uids) != records:
+            _invalid(
+                "payload.outcomes",
+                f"must contain exactly {records} unique UIDs at cost {cost:g}",
+            )
+        if retained_uids is None:
+            retained_uids = uids
+        elif uids != retained_uids:
+            _invalid("payload.outcomes", "must retain the same UID set at every cost")
+        comparison = comparisons_by_cost[cost]
+        learned_path = (
+            f"payload.rows[{rows.index(rows_by_cost[cost][comparison['learned_policy']])}]"
+        )
+        baseline_path = (
+            f"payload.rows[{rows.index(rows_by_cost[cost][comparison['baseline_policy']])}]"
+        )
+        _validate_selected_row_aggregate(
+            cost_outcomes,
+            rows_by_cost[cost][comparison["learned_policy"]],
+            "learned",
+            learned_path,
+            max_samples,
+        )
+        _validate_selected_row_aggregate(
+            cost_outcomes,
+            rows_by_cost[cost][comparison["baseline_policy"]],
+            "baseline",
+            baseline_path,
+            max_samples,
+        )
+        paired_fields = (
+            ("accuracy_delta", "correct"),
+            ("average_samples_delta", "samples"),
+            ("average_tokens_delta", "tokens"),
+            ("utility_delta", "utility"),
+        )
+        comparison_index = comparisons.index(comparison)
+        for delta_field, outcome_field in paired_fields:
+            expected = _mean(
+                [
+                    float(outcome[f"learned_{outcome_field}"])
+                    - float(outcome[f"baseline_{outcome_field}"])
+                    for outcome in cost_outcomes
+                ]
+            )
+            _expect_close(
+                float(comparison[delta_field]),
+                expected,
+                f"payload.comparisons[{comparison_index}].{delta_field}",
+            )
 
     bootstrap = _mapping(root["bootstrap"], "payload.bootstrap")
     _required(bootstrap, ("resamples", "seed", "confidence"), "payload.bootstrap")
@@ -269,6 +506,10 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
     _required(objective, ("name", "formula", "cost_unit"), "payload.objective")
     for field in ("name", "formula", "cost_unit"):
         _string(objective[field], f"payload.objective.{field}")
+    if objective["formula"] != "accuracy - lambda * (samples - 1)":
+        _invalid("payload.objective.formula", "must match the retained-outcome utility equation")
+    if objective["cost_unit"] != "additional_samples":
+        _invalid("payload.objective.cost_unit", "must equal additional_samples")
 
     data = _mapping(root["data"], "payload.data")
     _required(data, ("path", "sha256", "schema_version", "profile"), "payload.data")
@@ -276,6 +517,9 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
     _sha256(data["sha256"], "payload.data.sha256")
     if data["schema_version"] is None:
         _invalid("payload.data.schema_version", "is required")
+    split = data.get("split")
+    if split is not None and split not in {"validation", "test"}:
+        _invalid("payload.data.split", "must be validation, test, or null")
     profile = _mapping(data["profile"], "payload.data.profile")
     if not profile:
         _invalid("payload.data.profile", "must contain dataset evidence")
@@ -302,8 +546,50 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
     for index, feature in enumerate(features):
         _string(feature, f"payload.policy.feature_names[{index}]")
     training = _mapping(policy["training"], "payload.policy.training")
-    _required(training, ("algorithm",), "payload.policy.training")
-    _string(training["algorithm"], "payload.policy.training.algorithm")
+    algorithm = training.get("algorithm", "not recorded")
+    _string(algorithm, "payload.policy.training.algorithm")
+    training["algorithm"] = algorithm
+
+    selection = root.get("baseline_selection")
+    if selection is not None:
+        selection_mapping = _mapping(selection, "payload.baseline_selection")
+        _required(
+            selection_mapping,
+            ("artifact", "validation_data", "validation_benchmark"),
+            "payload.baseline_selection",
+        )
+        _artifact_metadata(
+            selection_mapping["artifact"],
+            "payload.baseline_selection.artifact",
+        )
+        validation_data = _artifact_metadata(
+            selection_mapping["validation_data"],
+            "payload.baseline_selection.validation_data",
+        )
+        _artifact_metadata(
+            selection_mapping["validation_benchmark"],
+            "payload.baseline_selection.validation_benchmark",
+        )
+        if str(validation_data["sha256"]).lower() == str(data["sha256"]).lower():
+            _invalid(
+                "payload.baseline_selection.validation_data.sha256",
+                "must differ from the test data SHA-256",
+            )
+    has_frozen_comparison = any(
+        comparison["selection"] == "validation-frozen"
+        for comparison in comparisons_by_cost.values()
+    )
+    if has_frozen_comparison:
+        if split != "test":
+            _invalid(
+                "payload.data.split",
+                "must equal test for validation-frozen comparisons",
+            )
+        if selection is None:
+            _invalid(
+                "payload.baseline_selection",
+                "is required for validation-frozen comparisons",
+            )
 
     frontier = _list(root["pareto_frontier"], "payload.pareto_frontier")
     if not frontier:
@@ -342,17 +628,179 @@ def _validate_payload(payload: Any) -> dict[str, Any]:
             _invalid(path, "must match a measured row so its uncertainty is available")
 
     protocol = root.get("protocol")
-    if protocol is not None:
-        protocol_mapping = _mapping(protocol, "payload.protocol")
-        _required(
-            protocol_mapping,
-            ("path", "sha256", "status", "evidence_tier"),
-            "payload.protocol",
+    if protocol is None:
+        if root.get("protocol_snapshot") is not None:
+            _invalid("payload.protocol_snapshot", "must be null when payload.protocol is null")
+        if root.get("protocol_result") is not None:
+            _invalid("payload.protocol_result", "must be null when payload.protocol is null")
+        return root
+
+    protocol_mapping = _mapping(protocol, "payload.protocol")
+    _required(
+        protocol_mapping,
+        ("path", "sha256", "status", "evidence_tier"),
+        "payload.protocol",
+    )
+    _string(protocol_mapping["path"], "payload.protocol.path")
+    _sha256(protocol_mapping["sha256"], "payload.protocol.sha256")
+    _string(protocol_mapping["status"], "payload.protocol.status")
+    _string(protocol_mapping["evidence_tier"], "payload.protocol.evidence_tier")
+    if split not in {"validation", "test"}:
+        _invalid("payload.data.split", "is required for a protocol-bound report")
+    _required(root, ("protocol_snapshot", "protocol_result"), "payload")
+    snapshot = _mapping(root["protocol_snapshot"], "payload.protocol_snapshot")
+    if snapshot.get("status") != protocol_mapping["status"]:
+        _invalid("payload.protocol_snapshot.status", "must match payload.protocol.status")
+    if snapshot.get("evidence_tier") != protocol_mapping["evidence_tier"]:
+        _invalid(
+            "payload.protocol_snapshot.evidence_tier",
+            "must match payload.protocol.evidence_tier",
         )
-        _string(protocol_mapping["path"], "payload.protocol.path")
-        _sha256(protocol_mapping["sha256"], "payload.protocol.sha256")
-        _string(protocol_mapping["status"], "payload.protocol.status")
-        _string(protocol_mapping["evidence_tier"], "payload.protocol.evidence_tier")
+    evaluation = _mapping(snapshot.get("evaluation"), "payload.protocol_snapshot.evaluation")
+    _required(
+        evaluation,
+        ("primary_costs", "reported_costs"),
+        "payload.protocol_snapshot.evaluation",
+    )
+    raw_primary_costs = _list(
+        evaluation["primary_costs"],
+        "payload.protocol_snapshot.evaluation.primary_costs",
+    )
+    if len(raw_primary_costs) != 3:
+        _invalid(
+            "payload.protocol_snapshot.evaluation.primary_costs",
+            "must contain exactly three costs",
+        )
+    primary_costs = [
+        _number(
+            cost,
+            f"payload.protocol_snapshot.evaluation.primary_costs[{index}]",
+        )
+        for index, cost in enumerate(raw_primary_costs)
+    ]
+    if len(set(primary_costs)) != 3 or any(
+        cost not in comparisons_by_cost for cost in primary_costs
+    ):
+        _invalid(
+            "payload.protocol_snapshot.evaluation.primary_costs",
+            "must name three unique evaluated comparison costs",
+        )
+    raw_reported_costs = _list(
+        evaluation["reported_costs"],
+        "payload.protocol_snapshot.evaluation.reported_costs",
+    )
+    reported_costs = [
+        _number(
+            cost,
+            f"payload.protocol_snapshot.evaluation.reported_costs[{index}]",
+        )
+        for index, cost in enumerate(raw_reported_costs)
+    ]
+    if not _same_json(raw_reported_costs, root["costs"]) or reported_costs != costs:
+        _invalid(
+            "payload.protocol_snapshot.evaluation.reported_costs",
+            "must exactly match payload.costs",
+        )
+    decision_rule = _mapping(
+        snapshot.get("decision_rule"),
+        "payload.protocol_snapshot.decision_rule",
+    )
+    _required(decision_rule, ("success",), "payload.protocol_snapshot.decision_rule")
+    success_rule = _string(
+        decision_rule["success"],
+        "payload.protocol_snapshot.decision_rule.success",
+    )
+    if success_rule != _SUCCESS_RULE:
+        _invalid(
+            "payload.protocol_snapshot.decision_rule.success",
+            "does not match the supported prespecified decision rule",
+        )
+    limitations = _list(
+        snapshot.get("limitations_declared_in_advance"),
+        "payload.protocol_snapshot.limitations_declared_in_advance",
+    )
+    if not limitations:
+        _invalid(
+            "payload.protocol_snapshot.limitations_declared_in_advance",
+            "must contain at least one declared limitation",
+        )
+    for index, limitation in enumerate(limitations):
+        _string(
+            limitation,
+            f"payload.protocol_snapshot.limitations_declared_in_advance[{index}]",
+        )
+
+    result = _mapping(root["protocol_result"], "payload.protocol_result")
+    _required(
+        result,
+        (
+            "eligible",
+            "passed",
+            "status",
+            "rule",
+            "primary_costs",
+            "utility_delta_lower_bounds",
+            "limitations",
+        ),
+        "payload.protocol_result",
+    )
+    if not _same_json(result["rule"], success_rule):
+        _invalid("payload.protocol_result.rule", "must exactly match the protocol snapshot")
+    if not _same_json(result["primary_costs"], raw_primary_costs):
+        _invalid(
+            "payload.protocol_result.primary_costs",
+            "must exactly match the protocol snapshot",
+        )
+    if not _same_json(result["limitations"], limitations):
+        _invalid(
+            "payload.protocol_result.limitations",
+            "must exactly match the protocol snapshot",
+        )
+    lower_bounds = _mapping(
+        result["utility_delta_lower_bounds"],
+        "payload.protocol_result.utility_delta_lower_bounds",
+    )
+    expected_bound_keys = {f"{cost:g}" for cost in primary_costs}
+    if set(lower_bounds) != expected_bound_keys:
+        _invalid(
+            "payload.protocol_result.utility_delta_lower_bounds",
+            "must contain exactly one bound for every primary cost",
+        )
+    recomputed_bounds: dict[float, float] = {}
+    for cost in primary_costs:
+        key = f"{cost:g}"
+        reported_bound = _number(
+            lower_bounds[key],
+            f"payload.protocol_result.utility_delta_lower_bounds.{key}",
+        )
+        comparison_bound = float(comparisons_by_cost[cost]["utility_delta_interval"]["lower"])
+        _expect_close(
+            reported_bound,
+            comparison_bound,
+            f"payload.protocol_result.utility_delta_lower_bounds.{key}",
+        )
+        recomputed_bounds[cost] = comparison_bound
+    expected_eligible = split == "test" and all(
+        comparisons_by_cost[cost]["selection"] == "validation-frozen" for cost in primary_costs
+    )
+    eligible = _boolean(result["eligible"], "payload.protocol_result.eligible")
+    if eligible != expected_eligible:
+        _invalid("payload.protocol_result.eligible", "does not match the retained evidence")
+    positive_bounds = sum(bound > 0.0 for bound in recomputed_bounds.values())
+    expected_passed = (
+        expected_eligible
+        and positive_bounds >= 2
+        and all(bound >= 0.0 for bound in recomputed_bounds.values())
+    )
+    passed = _boolean(result["passed"], "payload.protocol_result.passed")
+    if passed != expected_passed:
+        _invalid("payload.protocol_result.passed", "does not match the prespecified rule")
+    expected_status = (
+        "pass" if expected_passed else ("fail" if expected_eligible else "not-applicable")
+    )
+    status = _string(result["status"], "payload.protocol_result.status")
+    if status != expected_status:
+        _invalid("payload.protocol_result.status", f"must equal {expected_status}")
 
     return root
 
@@ -826,6 +1274,12 @@ def _comparison_evidence(
 
 def _interactive_entries(payload: dict[str, Any]) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
+    protocol_snapshot = payload.get("protocol_snapshot")
+    primary_costs = (
+        set()
+        if protocol_snapshot is None
+        else {float(cost) for cost in protocol_snapshot["evaluation"]["primary_costs"]}
+    )
     for cost in payload["costs"]:
         learned = next(
             row
@@ -836,12 +1290,19 @@ def _interactive_entries(payload: dict[str, Any]) -> list[dict[str, Any]]:
             item for item in payload["comparisons"] if float(item["scoring_cost"]) == float(cost)
         )
         status, tone, conclusion = _comparison_evidence(learned, comparison)
+        if protocol_snapshot is None:
+            role = "Exploratory cost — no prespecified decision role"
+        elif float(cost) in primary_costs:
+            role = "Primary cost — counts toward the protocol result"
+        else:
+            role = "Sensitivity cost — does not affect the protocol result"
         entries.append(
             {
                 "cost": _fmt_cost(cost),
                 "policy": str(learned["policy"]),
                 "comparator": str(comparison["baseline_policy"]),
                 "selection": str(comparison["selection"]),
+                "role": role,
                 "status": status,
                 "tone": tone,
                 "conclusion": conclusion,
@@ -895,6 +1356,143 @@ def _histogram_rows(counts: list[int]) -> str:
 
 def _pretty_json(value: Any) -> str:
     return _escape(json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False))
+
+
+def _decision_presentation(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("protocol") is None:
+        return {
+            "status": "EXPLORATORY",
+            "tone": "exploratory",
+            "title": "Exploratory benchmark — not a protocol decision",
+            "summary": (
+                "Use the cost dial and complete tables to inspect measured trade-offs and form "
+                "hypotheses. Comparators were selected from these same evaluation outcomes, so "
+                "positive intervals are not confirmatory evidence."
+            ),
+            "rule": "No prespecified success rule applies because no frozen protocol was supplied.",
+            "primary_costs": set(),
+            "limitations_title": "How to use this quickstart report",
+            "limitations": [
+                "Treat every cost as exploratory; none contributes to a PASS or FAIL headline.",
+                "Freeze a protocol and validation-selected comparators before interpreting a later test run confirmatorily.",
+            ],
+        }
+
+    result = payload["protocol_result"]
+    status = str(result["status"])
+    if status == "pass":
+        display_status = "PASS"
+        tone = "positive"
+        summary = (
+            "The retained paired lower bounds satisfy the prespecified rule. This headline uses "
+            "only primary costs; sensitivity costs cannot improve or overturn it."
+        )
+        title = "Prespecified test decision"
+    elif status == "fail":
+        display_status = "FAIL"
+        tone = "negative"
+        summary = (
+            "The retained paired lower bounds do not satisfy the prespecified rule. This headline "
+            "uses only primary costs; positive sensitivity results cannot rescue it."
+        )
+        title = "Prespecified test decision"
+    else:
+        display_status = "VALIDATION / NOT APPLICABLE"
+        tone = "exploratory"
+        summary = (
+            "This protocol-bound artifact is not eligible for a test PASS or FAIL. Only a test "
+            "artifact with validation-frozen comparators can receive that decision."
+        )
+        title = "Protocol-bound validation evidence"
+    return {
+        "status": display_status,
+        "tone": tone,
+        "title": title,
+        "summary": summary,
+        "rule": str(result["rule"]),
+        "primary_costs": {float(cost) for cost in result["primary_costs"]},
+        "limitations_title": "Limitations declared before evaluation",
+        "limitations": [str(limitation) for limitation in result["limitations"]],
+    }
+
+
+def _render_decision_panel(
+    payload: dict[str, Any],
+    decision: dict[str, Any],
+) -> str:
+    comparisons = {
+        float(comparison["scoring_cost"]): comparison for comparison in payload["comparisons"]
+    }
+    primary_costs = decision["primary_costs"]
+    cost_rows: list[str] = []
+    for raw_cost in payload["costs"]:
+        cost = float(raw_cost)
+        comparison = comparisons[cost]
+        lower_bound = float(comparison["utility_delta_interval"]["lower"])
+        if payload.get("protocol") is None:
+            role = "Exploratory"
+            role_detail = "No decision role"
+            role_class = "exploratory"
+        elif cost in primary_costs:
+            role = "Primary"
+            role_detail = "Counts toward headline"
+            role_class = "primary"
+        else:
+            role = "Sensitivity"
+            role_detail = "Excluded from headline"
+            role_class = "sensitivity"
+        cost_rows.append(
+            f'<li class="decision-cost decision-cost-{role_class}">'
+            "<span>"
+            f"<strong>λ={_escape(_fmt_cost(cost))}</strong>"
+            f"<small>{_escape(role)} · {_escape(role_detail)}</small>"
+            "</span>"
+            f'<span class="numeric">95% utility Δ lower bound '
+            f"{_escape(f'{lower_bound:+.6g}')}</span>"
+            "</li>"
+        )
+
+    limitation_rows = "".join(
+        f"<li>{_escape(limitation)}</li>" for limitation in decision["limitations"]
+    )
+    selection = payload.get("baseline_selection")
+    if selection is None:
+        bindings = (
+            '<p class="binding-empty">No validation-selection artifact is bound to this '
+            "report. Exploratory and validation runs do not claim frozen comparator selection.</p>"
+        )
+    else:
+        artifact = selection["artifact"]
+        validation_data = selection["validation_data"]
+        validation_benchmark = selection["validation_benchmark"]
+        bindings = (
+            '<dl class="binding-list">'
+            f'<div><dt>Selection artifact SHA-256</dt><dd><code class="hash">{_escape(artifact["sha256"])}</code></dd></div>'
+            f'<div><dt>Validation data SHA-256</dt><dd><code class="hash">{_escape(validation_data["sha256"])}</code></dd></div>'
+            f'<div><dt>Validation benchmark SHA-256</dt><dd><code class="hash">{_escape(validation_benchmark["sha256"])}</code></dd></div>'
+            "</dl>"
+        )
+    return (
+        f'<section class="decision-panel" data-tone="{_escape(decision["tone"])}" '
+        'aria-labelledby="decision-title">'
+        '<div class="decision-summary">'
+        '<span class="eyebrow">Overall protocol status</span>'
+        f'<strong class="decision-status">{_escape(decision["status"])}</strong>'
+        f'<h2 id="decision-title">{_escape(decision["title"])}</h2>'
+        f"<p>{_escape(decision['summary'])}</p>"
+        "</div>"
+        '<div class="decision-detail">'
+        '<p class="decision-rule"><span>Exact success rule</span>'
+        f"{_escape(decision['rule'])}</p>"
+        "<h3>Cost roles and paired lower bounds</h3>"
+        f'<ul class="decision-costs">{"".join(cost_rows)}</ul>'
+        f"<h3>{_escape(decision['limitations_title'])}</h3>"
+        f'<ul class="limitations-list">{limitation_rows}</ul>'
+        "<h3>Validation-selection bindings</h3>"
+        f"{bindings}"
+        "</div>"
+        "</section>"
+    )
 
 
 def _report_styles() -> str:
@@ -1003,6 +1601,104 @@ h1 span {{ color: var(--learned-strong); }}
 .evidence-stamp .eyebrow {{ display: block; margin-bottom: var(--space-3); }}
 .evidence-stamp strong {{ display: block; margin-bottom: var(--space-3); font-size: 1.125rem; line-height: 1.35; }}
 .evidence-stamp p {{ margin-bottom: 0; color: var(--subtle); font-size: .8125rem; }}
+.decision-panel {{
+  display: grid;
+  grid-template-columns: minmax(16rem, .58fr) minmax(0, 1fr);
+  gap: var(--space-8);
+  padding-block: var(--space-8);
+  border-bottom: 1px solid var(--rule);
+}}
+.decision-summary {{
+  align-self: start;
+  padding-left: var(--space-6);
+  border-left: var(--space-1) solid var(--rule-strong);
+}}
+.decision-panel[data-tone="positive"] .decision-summary {{ border-color: var(--positive); }}
+.decision-panel[data-tone="negative"] .decision-summary {{ border-color: var(--negative); }}
+.decision-panel[data-tone="exploratory"] .decision-summary {{ border-color: var(--heuristic); }}
+.decision-status {{
+  display: block;
+  margin: var(--space-3) 0 var(--space-6);
+  color: var(--text);
+  font: 800 clamp(2.5rem, 6vw, 5rem)/.95 "SFMono-Regular", Consolas, monospace;
+  letter-spacing: -.06em;
+}}
+.decision-panel[data-tone="positive"] .decision-status {{ color: var(--positive); }}
+.decision-panel[data-tone="negative"] .decision-status {{ color: var(--negative); }}
+.decision-panel[data-tone="exploratory"] .decision-status {{ color: var(--heuristic); }}
+.decision-summary h2 {{ margin-bottom: var(--space-4); font-size: 1.5rem; letter-spacing: -.02em; }}
+.decision-summary p {{ margin-bottom: 0; color: var(--muted); font-size: .9375rem; line-height: 1.72; }}
+.decision-detail {{ min-width: 0; }}
+.decision-detail h3 {{
+  margin: var(--space-7) 0 var(--space-3);
+  color: var(--muted);
+  font-size: .75rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}}
+.decision-detail h3:first-of-type {{ margin-top: 0; }}
+.decision-rule {{
+  margin-bottom: var(--space-6);
+  padding: var(--space-5);
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+  color: var(--text);
+  font: 600 .875rem/1.7 "SFMono-Regular", Consolas, monospace;
+}}
+.decision-rule span {{
+  display: block;
+  margin-bottom: var(--space-2);
+  color: var(--learned);
+  font-size: .6875rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}}
+.decision-costs, .limitations-list {{
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}}
+.decision-cost {{
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) minmax(14rem, auto);
+  gap: var(--space-4);
+  align-items: center;
+  padding-block: var(--space-3);
+  border-bottom: 1px solid var(--rule);
+}}
+.decision-cost:first-child {{ border-top: 1px solid var(--rule); }}
+.decision-cost > span:first-child {{ display: flex; align-items: baseline; gap: var(--space-3); }}
+.decision-cost strong {{ color: var(--text); font-family: "SFMono-Regular", Consolas, monospace; }}
+.decision-cost small {{ color: var(--subtle); font-size: .75rem; }}
+.decision-cost-primary small {{ color: var(--learned); }}
+.decision-cost > .numeric {{ color: var(--muted); font-size: .75rem; white-space: normal; }}
+.limitations-list {{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 var(--space-6);
+  counter-reset: limitation;
+}}
+.limitations-list li {{
+  position: relative;
+  padding: var(--space-3) 0 var(--space-3) var(--space-6);
+  border-bottom: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: .8125rem;
+  counter-increment: limitation;
+}}
+.limitations-list li::before {{
+  content: counter(limitation, decimal-leading-zero);
+  position: absolute;
+  left: 0;
+  color: var(--subtle);
+  font: 600 .6875rem/1.8 "SFMono-Regular", Consolas, monospace;
+}}
+.binding-list {{ margin: 0; }}
+.binding-list div {{ padding-block: var(--space-3); border-bottom: 1px solid var(--rule); }}
+.binding-list div:first-child {{ border-top: 1px solid var(--rule); }}
+.binding-list dt {{ margin-bottom: var(--space-1); color: var(--subtle); font-size: .6875rem; text-transform: uppercase; letter-spacing: .06em; }}
+.binding-list dd {{ margin: 0; font-size: .75rem; }}
+.binding-empty {{ margin-bottom: 0; color: var(--subtle); font-size: .8125rem; }}
 .report-section {{ padding-block: var(--space-9); border-bottom: 1px solid var(--rule); }}
 .section-heading {{
   display: grid;
@@ -1143,9 +1839,10 @@ pre {{ max-width: 100%; margin: 0; padding: var(--space-4); overflow: auto; back
 @media (max-width: 48rem) {{
   .page-shell {{ width: min(calc(100% - 1.5rem), 78rem); }}
   .topline, .report-footer {{ flex-direction: column; }}
-  .hero-grid, .section-heading, .dial-panel, .histogram, .provenance-grid {{ grid-template-columns: 1fr; }}
+  .hero-grid, .decision-panel, .section-heading, .dial-panel, .histogram, .provenance-grid {{ grid-template-columns: 1fr; }}
   .hero-grid {{ gap: var(--space-6); padding-top: var(--space-7); }}
   .evidence-stamp {{ border-left: 0; border-top: 1px solid var(--rule); padding: var(--space-5) 0 0; }}
+  .decision-summary {{ padding-left: var(--space-5); }}
   .report-section {{ padding-block: var(--space-8); }}
   .dial-panel {{ gap: var(--space-5); padding: var(--space-5); }}
   .selection-meta {{ border-left: 0; border-top: 1px solid var(--rule); padding-top: var(--space-3); }}
@@ -1159,6 +1856,9 @@ pre {{ max-width: 100%; margin: 0; padding: var(--space-4); overflow: auto; back
   .metric-card:last-child {{ border-bottom: 0; }}
   .dial-scale span:nth-child(even) {{ display: none; }}
   .selection-meta div {{ grid-template-columns: 5.5rem minmax(0, 1fr); }}
+  .decision-cost {{ grid-template-columns: 1fr; gap: var(--space-1); }}
+  .decision-cost > span:first-child {{ align-items: flex-start; flex-direction: column; gap: var(--space-1); }}
+  .limitations-list {{ grid-template-columns: 1fr; }}
   .stop-row {{ grid-template-columns: 1.5rem minmax(0, 1fr) 3.5rem; gap: var(--space-2); }}
 }}
 @media (prefers-reduced-motion: reduce) {{
@@ -1175,6 +1875,8 @@ pre {{ max-width: 100%; margin: 0; padding: var(--space-4); overflow: auto; back
 def _render_html(payload: dict[str, Any], svg: str) -> str:
     entries = _interactive_entries(payload)
     initial = entries[0]
+    decision = _decision_presentation(payload)
+    decision_panel = _render_decision_panel(payload, decision)
     learned_rows = sorted(
         (row for row in payload["rows"] if str(row["family"]) == "offline-rl"),
         key=lambda row: float(row["scoring_cost"]),
@@ -1261,12 +1963,13 @@ def _render_html(payload: dict[str, Any], svg: str) -> str:
     </div>
     <aside class="evidence-stamp" aria-label="Evidence status">
       <span class="eyebrow">Evidence status</span>
-      <strong>{_escape(comparison_scope)}</strong>
+      <strong>{_escape(decision["status"])}</strong>
       <p>{_escape(protocol_stamp)}. {_escape(protocol_note)}</p>
     </aside>
   </div>
 </header>
 <main id="report-content">
+  {decision_panel}
   <section class="report-section" aria-labelledby="console-title">
     <div class="section-heading">
       <div>
@@ -1288,6 +1991,7 @@ def _render_html(payload: dict[str, Any], svg: str) -> str:
           <div><dt>Learned policy</dt><dd id="selected-policy">{_escape(initial["policy"])}</dd></div>
           <div><dt>Comparator</dt><dd id="selected-comparator">{_escape(initial["comparator"])}</dd></div>
           <div><dt>Selection</dt><dd id="selected-method">{_escape(initial["selection"])}</dd></div>
+          <div><dt>Protocol role</dt><dd id="selected-role">{_escape(initial["role"])}</dd></div>
         </dl>
       </div>
       <div class="status-line" id="selected-status" data-tone="{_escape(initial["tone"])}">{_escape(initial["status"])}</div>
@@ -1505,6 +2209,7 @@ def _render_html(payload: dict[str, Any], svg: str) -> str:
     put("selected-policy", selected.policy);
     put("selected-comparator", selected.comparator);
     put("selected-method", selected.selection);
+    put("selected-role", selected.role);
     put("selected-status", selected.status);
     put("accuracy-value", selected.accuracy.value);
     put("accuracy-interval", selected.accuracy.interval);

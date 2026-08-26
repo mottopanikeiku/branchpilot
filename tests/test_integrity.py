@@ -78,21 +78,22 @@ def test_fingerprints_are_canonical_and_ignore_uid_and_metadata() -> None:
     assert len(rollout_fingerprint(first)) == 64
 
 
-def test_prompt_and_rollout_fingerprints_change_for_question_and_exact_gold_changes() -> None:
+def test_prompt_identity_tracks_question_while_rollout_identity_tracks_gold() -> None:
     original = _rollout()
     changed_question = replace(original, question="What is 6 × 8?")
     changed_gold = replace(original, gold="42.0")
 
     assert prompt_fingerprint(original) != prompt_fingerprint(changed_question)
-    assert prompt_fingerprint(original) != prompt_fingerprint(changed_gold)
+    assert prompt_fingerprint(original) == prompt_fingerprint(changed_gold)
     assert rollout_fingerprint(original) != rollout_fingerprint(changed_question)
     assert rollout_fingerprint(original) != rollout_fingerprint(changed_gold)
 
 
-def test_prompt_fingerprint_does_not_normalize_gold_answer_text() -> None:
+def test_prompt_fingerprint_excludes_non_visible_gold_answer_text() -> None:
     original = _rollout(gold=" 42 ")
 
-    assert prompt_fingerprint(original) != prompt_fingerprint(replace(original, gold="42"))
+    assert prompt_fingerprint(original) == prompt_fingerprint(replace(original, gold="42"))
+    assert rollout_fingerprint(original) != rollout_fingerprint(replace(original, gold="42"))
 
 
 @pytest.mark.parametrize(
@@ -206,6 +207,7 @@ def test_validate_unique_accepts_distinct_records() -> None:
             replace(
                 _rollout(uid="left"),
                 uid="prompt-copy",
+                gold="43",
                 samples=(Sample("different", None, 1),),
             ),
             "overlapping prompt fingerprint",

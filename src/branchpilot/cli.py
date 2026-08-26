@@ -4,6 +4,8 @@ import argparse
 import json
 import math
 import random
+import stat
+from itertools import combinations
 from pathlib import Path
 
 from rich.console import Console
@@ -11,19 +13,42 @@ from rich.table import Table
 
 from branchpilot.artifacts import atomic_write_text, paths_alias, sha256_file
 from branchpilot.calibration import load_operating_point
-from branchpilot.evaluate import benchmark, decision_trace, pareto_frontier
+from branchpilot.evaluate import (
+    AGREEMENT_STREAKS,
+    CONFIDENCE_THRESHOLDS,
+    benchmark,
+    decision_trace,
+    pareto_frontier,
+)
 from branchpilot.features import FEATURE_NAMES
 from branchpilot.integrity import (
     profile_rollouts,
     validate_disjoint,
     validate_unique,
 )
-from branchpilot.policy import ARTIFACT_VERSION, COST_MODEL, BranchPilotPolicy
-from branchpilot.report import write_report
+from branchpilot.policy import (
+    ARTIFACT_VERSION,
+    COST_MODEL,
+    TRAINING_ALGORITHM,
+    BranchPilotPolicy,
+)
+from branchpilot.provenance import Protocol, verify_manifest_artifact
+from branchpilot.report import render_svg, write_report
 from branchpilot.schema import SCHEMA_VERSION, read_jsonl, write_jsonl
 from branchpilot.synthetic import make_synthetic_rollouts
 
+_SUCCESS_RULE = (
+    "paired utility interval lower bound above zero at two or more primary costs "
+    "and nonnegative at the third"
+)
 console = Console()
+
+
+def _assert_distinct_paths(**paths: str | Path | None) -> None:
+    present = [(label, Path(path)) for label, path in paths.items() if path is not None]
+    for (left_label, left), (right_label, right) in combinations(present, 2):
+        if paths_alias(left, right):
+            raise ValueError(f"{left_label} and {right_label} must be distinct paths: {left}")
 
 
 def _training_api():
@@ -48,16 +73,146 @@ def _costs(value: str) -> tuple[float, ...]:
     return parsed
 
 
-def _load_frozen_baselines(path: str | None) -> dict[float, str] | None:
-    if path is None:
-        return None
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or not payload:
-        raise ValueError("frozen baseline file must contain a non-empty JSON object")
+def _snapshot_file(path: str | Path, label: str) -> dict[str, str | int]:
+    source = Path(path)
     try:
-        return {float(cost): str(policy) for cost, policy in payload.items()}
+        mode = source.lstat().st_mode
+    except OSError as exc:
+        raise ValueError(f"{label} is not a readable regular file: {source}") from exc
+    if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+        raise ValueError(f"{label} must be a regular file, not a symlink: {source}")
+    return {
+        "path": source.name,
+        "bytes": source.stat().st_size,
+        "sha256": sha256_file(source),
+    }
+
+
+def _verify_unchanged(
+    path: str | Path,
+    expected: dict[str, str | int],
+    label: str,
+) -> None:
+    actual = _snapshot_file(path, label)
+    if actual != expected:
+        raise RuntimeError(f"{label} changed while it was being used")
+
+
+def _validate_policy_protocol(policy: BranchPilotPolicy, protocol: Protocol) -> None:
+    training = policy.training
+    config = training.get("config")
+    if not isinstance(config, dict):
+        raise ValueError("policy training metadata is missing its config object")
+    requirements = {
+        "controller.algorithm": training.get("algorithm"),
+        "controller.max_samples": config.get("max_samples"),
+        "controller.hidden_size": config.get("hidden_size"),
+        "controller.epochs": config.get("epochs"),
+        "controller.batch_size": config.get("batch_size"),
+        "controller.learning_rate": config.get("learning_rate"),
+        "controller.seed": config.get("seed"),
+        "controller.training_costs": config.get("costs"),
+    }
+    for dotted_path, actual in requirements.items():
+        protocol.require(dotted_path, actual)
+    provenance = training.get("provenance")
+    if not isinstance(provenance, dict):
+        raise ValueError("policy training metadata is missing provenance")
+    if provenance.get("protocol") != protocol.metadata():
+        raise ValueError("policy was not trained under this frozen protocol")
+
+
+def _protocol_result(protocol: Protocol, result, split: str | None) -> dict:
+    protocol.require("decision_rule.success", _SUCCESS_RULE)
+    evaluation = protocol.payload.get("evaluation")
+    limitations = protocol.payload.get("limitations_declared_in_advance")
+    if not isinstance(evaluation, dict) or not isinstance(limitations, list):
+        raise ValueError("protocol is missing evaluation or limitation declarations")
+    primary_costs = evaluation.get("primary_costs")
+    if not isinstance(primary_costs, list) or len(primary_costs) != 3:
+        raise ValueError("protocol evaluation.primary_costs must contain exactly three costs")
+    comparisons = {comparison.scoring_cost: comparison for comparison in result.comparisons}
+    if any(cost not in comparisons for cost in primary_costs):
+        raise ValueError("protocol primary costs are missing from benchmark comparisons")
+    lower_bounds = {
+        f"{cost:g}": comparisons[cost].utility_delta_interval.lower for cost in primary_costs
+    }
+    eligible = split == "test" and all(
+        comparisons[cost].selection == "validation-frozen" for cost in primary_costs
+    )
+    positive = sum(value > 0 for value in lower_bounds.values())
+    passed = eligible and positive >= 2 and all(value >= 0 for value in lower_bounds.values())
+    return {
+        "eligible": eligible,
+        "passed": passed,
+        "status": "pass" if passed else ("fail" if eligible else "not-applicable"),
+        "rule": _SUCCESS_RULE,
+        "primary_costs": primary_costs,
+        "utility_delta_lower_bounds": lower_bounds,
+        "limitations": limitations,
+    }
+
+
+def _load_frozen_baselines(
+    path: str | Path,
+    *,
+    costs: tuple[float, ...],
+    policy_snapshot: dict[str, str | int],
+    protocol: Protocol,
+) -> tuple[dict[float, str], dict[str, str | int], dict]:
+    selection_path = Path(path)
+    selection_snapshot = _snapshot_file(selection_path, "baseline selection")
+    payload = json.loads(selection_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        raise ValueError("baseline selection must be a schema-version 1 JSON object")
+    if payload.get("selection") != "observed-best-on-validation":
+        raise ValueError("baseline selection has an unsupported selection method")
+    if payload.get("protocol") != protocol.metadata():
+        raise ValueError("baseline selection is not bound to this frozen protocol")
+    if payload.get("policy") != policy_snapshot:
+        raise ValueError("baseline selection is not bound to this policy artifact")
+    if payload.get("costs") != list(costs):
+        raise ValueError("baseline selection costs do not match evaluation costs")
+    source = payload.get("validation_benchmark")
+    if not isinstance(source, dict):
+        raise ValueError("baseline selection is missing validation_benchmark")
+    source_path = selection_path.parent / str(source.get("path", ""))
+    if _snapshot_file(source_path, "validation benchmark") != source:
+        raise ValueError("baseline selection validation benchmark binding is invalid")
+    validation_payload = json.loads(source_path.read_text(encoding="utf-8"))
+    if not isinstance(validation_payload, dict):
+        raise ValueError("validation benchmark must be a JSON object")
+    if validation_payload.get("protocol") != protocol.metadata():
+        raise ValueError("validation benchmark protocol binding is invalid")
+    validation_policy = validation_payload.get("policy")
+    if not isinstance(validation_policy, dict) or any(
+        validation_policy.get(key) != value for key, value in policy_snapshot.items()
+    ):
+        raise ValueError("validation benchmark policy binding is invalid")
+    validation_data = payload.get("validation_data")
+    if not isinstance(validation_data, dict) or any(
+        validation_payload.get("data", {}).get(key) != value
+        for key, value in validation_data.items()
+    ):
+        raise ValueError("baseline selection validation data binding is invalid")
+    if payload.get("validation_manifest") != validation_payload.get("data", {}).get("manifest"):
+        raise ValueError("baseline selection generation manifest binding is invalid")
+    raw_baselines = payload.get("baselines")
+    if not isinstance(raw_baselines, dict) or not raw_baselines:
+        raise ValueError("baseline selection must contain a non-empty baselines object")
+    try:
+        baselines = {float(cost): str(policy) for cost, policy in raw_baselines.items()}
     except (TypeError, ValueError) as exc:
-        raise ValueError("frozen baseline keys must be numeric costs") from exc
+        raise ValueError("baseline selection keys must be numeric costs") from exc
+    if set(baselines) != set(costs) or any(not policy for policy in baselines.values()):
+        raise ValueError("baseline selection must name one policy for every evaluation cost")
+    expected_baselines = {
+        f"{comparison['scoring_cost']:g}": comparison["baseline_policy"]
+        for comparison in validation_payload.get("comparisons", [])
+    }
+    if raw_baselines != expected_baselines:
+        raise ValueError("baseline names do not match observed-best validation comparisons")
+    return baselines, selection_snapshot, payload
 
 
 def _write_benchmark(
@@ -68,12 +223,73 @@ def _write_benchmark(
     *,
     bootstrap_samples: int = 2_000,
     bootstrap_seed: int = 0,
-    frozen_baselines: dict[float, str] | None = None,
-    protocol_path: Path | None = None,
+    frozen_baseline_path: Path | None = None,
+    protocol: Protocol | None = None,
+    manifest_path: Path | None = None,
+    split: str | None = None,
 ) -> dict:
+    data_snapshot = _snapshot_file(data_path, "evaluation data")
+    policy_snapshot = _snapshot_file(policy_path, "policy artifact")
+    manifest_snapshot = None
+    if protocol is None:
+        if manifest_path is not None or split is not None or frozen_baseline_path is not None:
+            raise ValueError("manifest, split, and frozen baselines require a frozen protocol")
+        frozen_baselines = None
+        selection_snapshot = None
+        selection_payload = None
+        validation_source = None
+    else:
+        if manifest_path is None or split not in {"validation", "test"}:
+            raise ValueError("protocol evaluation requires --manifest and --split validation|test")
+        manifest_snapshot = _snapshot_file(manifest_path, "generation manifest")
+        verify_manifest_artifact(manifest_path, data_path, split, protocol)
+        protocol.require("evaluation.reported_costs", list(costs))
+        protocol.require("evaluation.bootstrap_resamples", bootstrap_samples)
+        protocol.require("evaluation.bootstrap_seed", bootstrap_seed)
+        if frozen_baseline_path is None:
+            if split == "test":
+                raise ValueError("test evaluation requires a bound validation baseline selection")
+            frozen_baselines = None
+            selection_snapshot = None
+            selection_payload = None
+            validation_source = None
+        else:
+            if split != "test":
+                raise ValueError("frozen baselines may only be consumed on the test split")
+            frozen_baselines, selection_snapshot, selection_payload = _load_frozen_baselines(
+                frozen_baseline_path,
+                costs=costs,
+                policy_snapshot=policy_snapshot,
+                protocol=protocol,
+            )
+            if selection_payload["validation_data"]["sha256"] == data_snapshot["sha256"]:
+                raise ValueError("validation and test data must have different SHA-256 values")
+            validation_source = (
+                Path(frozen_baseline_path).parent
+                / selection_payload["validation_benchmark"]["path"]
+            )
+            if paths_alias(output, validation_source):
+                raise ValueError("test benchmark output cannot overwrite validation benchmark")
+
     rollouts = read_jsonl(data_path)
     validate_unique(rollouts)
+    if protocol is not None:
+        protocol.require(f"collection.{split}_records", len(rollouts))
     policy = BranchPilotPolicy.load(policy_path)
+    if protocol is not None:
+        _validate_policy_protocol(policy, protocol)
+        protocol.require(
+            "evaluation.fixed_counts",
+            list(range(1, policy.max_samples + 1)),
+        )
+        protocol.require(
+            "evaluation.confidence_thresholds",
+            list(CONFIDENCE_THRESHOLDS),
+        )
+        protocol.require(
+            "evaluation.agreement_streaks",
+            list(AGREEMENT_STREAKS),
+        )
     result = benchmark(
         rollouts,
         policy,
@@ -82,17 +298,25 @@ def _write_benchmark(
         bootstrap_seed=bootstrap_seed,
         frozen_baselines=frozen_baselines,
     )
-    protocol = None
-    if protocol_path is not None:
-        protocol_payload = json.loads(protocol_path.read_text(encoding="utf-8"))
-        if not isinstance(protocol_payload, dict):
-            raise ValueError("benchmark protocol must be a JSON object")
-        protocol = {
-            "path": protocol_path.name,
-            "sha256": sha256_file(protocol_path),
-            "status": protocol_payload.get("status"),
-            "evidence_tier": protocol_payload.get("evidence_tier"),
-        }
+    protocol_result = None if protocol is None else _protocol_result(protocol, result, split)
+    _verify_unchanged(data_path, data_snapshot, "evaluation data")
+    _verify_unchanged(policy_path, policy_snapshot, "policy artifact")
+    if protocol is not None:
+        if Protocol.load(protocol.path).metadata() != protocol.metadata():
+            raise RuntimeError("frozen protocol changed during evaluation")
+        _verify_unchanged(manifest_path, manifest_snapshot, "generation manifest")
+        if frozen_baseline_path is not None:
+            _verify_unchanged(
+                frozen_baseline_path,
+                selection_snapshot,
+                "baseline selection",
+            )
+            _verify_unchanged(
+                validation_source,
+                selection_payload["validation_benchmark"],
+                "validation benchmark",
+            )
+
     payload = {
         "schema_version": 2,
         **result.to_dict(),
@@ -101,23 +325,37 @@ def _write_benchmark(
             "formula": "accuracy - lambda * (samples - 1)",
             "cost_unit": "additional_samples",
         },
-        "protocol": protocol,
+        "protocol": None if protocol is None else protocol.metadata(),
+        "protocol_snapshot": (
+            None if protocol is None else json.loads(json.dumps(protocol.payload, sort_keys=True))
+        ),
+        "protocol_result": protocol_result,
         "data": {
-            "path": data_path.name,
-            "sha256": sha256_file(data_path),
+            **data_snapshot,
             "schema_version": SCHEMA_VERSION,
             "profile": profile_rollouts(rollouts).to_dict(),
+            "split": split,
+            "manifest": manifest_snapshot,
         },
         "policy": {
-            "path": policy_path.name,
-            "sha256": sha256_file(policy_path),
+            **policy_snapshot,
             "artifact_version": ARTIFACT_VERSION,
             "cost_model": COST_MODEL,
             "feature_names": list(FEATURE_NAMES),
             "training": policy.training,
         },
+        "baseline_selection": (
+            None
+            if selection_payload is None
+            else {
+                "artifact": selection_snapshot,
+                "validation_data": selection_payload["validation_data"],
+                "validation_benchmark": selection_payload["validation_benchmark"],
+            }
+        ),
         "pareto_frontier": [row.to_dict() for row in pareto_frontier(result)],
     }
+    render_svg(payload)
     atomic_write_text(output, json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return payload
 
@@ -171,8 +409,13 @@ def command_synthetic(args: argparse.Namespace) -> None:
 def command_split(args: argparse.Namespace) -> None:
     train_path = Path(args.train_output)
     test_path = Path(args.test_output)
-    if paths_alias(train_path, test_path):
-        raise ValueError("train and test outputs must be distinct paths")
+    _assert_distinct_paths(
+        data=args.data,
+        train_output=train_path,
+        test_output=test_path,
+        manifest=args.manifest,
+    )
+    source_snapshot = _snapshot_file(args.data, "split source")
     records = read_jsonl(args.data)
     validate_unique(records)
     source_profile = profile_rollouts(records)
@@ -185,6 +428,7 @@ def command_split(args: argparse.Namespace) -> None:
     train_records = records[: args.train_size]
     test_records = records[args.train_size : requested]
     validate_disjoint(train_records, test_records)
+    _verify_unchanged(args.data, source_snapshot, "split source")
     write_jsonl(train_path, train_records)
     write_jsonl(test_path, test_records)
     if args.manifest:
@@ -193,8 +437,7 @@ def command_split(args: argparse.Namespace) -> None:
             "seed": args.seed,
             "source": {
                 **source_profile.to_dict(),
-                "path": Path(args.data).name,
-                "sha256": sha256_file(args.data),
+                **source_snapshot,
             },
             "train": {
                 **profile_rollouts(train_records).to_dict(),
@@ -218,6 +461,11 @@ def command_split(args: argparse.Namespace) -> None:
 
 
 def command_audit(args: argparse.Namespace) -> None:
+    _assert_distinct_paths(
+        data=args.data,
+        comparison=args.compare,
+        json_output=args.json_output,
+    )
     records = read_jsonl(args.data)
     validate_unique(records)
     profile = profile_rollouts(records)
@@ -255,9 +503,42 @@ def command_audit(args: argparse.Namespace) -> None:
 
 
 def command_train(args: argparse.Namespace) -> None:
-    TrainConfig, train_policy = _training_api()
+    _assert_distinct_paths(
+        data=args.data,
+        output=args.output,
+        protocol=args.protocol,
+        manifest=args.manifest,
+    )
+    data_snapshot = _snapshot_file(args.data, "training data")
+    protocol = None if args.protocol is None else Protocol.load(args.protocol)
+    manifest_snapshot = None
+    manifest = None
+    if protocol is None:
+        if args.manifest is not None:
+            raise ValueError("--manifest requires --protocol")
+    else:
+        if args.manifest is None:
+            raise ValueError("canonical training requires --manifest")
+        manifest_snapshot = _snapshot_file(args.manifest, "generation manifest")
+        manifest = verify_manifest_artifact(args.manifest, args.data, "train", protocol)
+        requirements = {
+            "controller.algorithm": TRAINING_ALGORITHM,
+            "controller.max_samples": args.max_samples,
+            "controller.hidden_size": args.hidden_size,
+            "controller.epochs": args.epochs,
+            "controller.batch_size": args.batch_size,
+            "controller.learning_rate": args.learning_rate,
+            "controller.seed": args.seed,
+            "controller.training_costs": list(args.costs),
+        }
+        for dotted_path, actual in requirements.items():
+            protocol.require(dotted_path, actual)
+
     rollouts = read_jsonl(args.data)
     validate_unique(rollouts)
+    if protocol is not None:
+        protocol.require("collection.train_records", len(rollouts))
+    TrainConfig, train_policy = _training_api()
     config = TrainConfig(
         max_samples=args.max_samples,
         hidden_size=args.hidden_size,
@@ -268,6 +549,16 @@ def command_train(args: argparse.Namespace) -> None:
         costs=args.costs,
     )
     policy, training = train_policy(rollouts, config)
+    _verify_unchanged(args.data, data_snapshot, "training data")
+    if protocol is not None:
+        if Protocol.load(protocol.path).metadata() != protocol.metadata():
+            raise RuntimeError("frozen protocol changed during training")
+        _verify_unchanged(args.manifest, manifest_snapshot, "generation manifest")
+        training["provenance"] = {
+            "protocol": protocol.metadata(),
+            "manifest": manifest_snapshot,
+            "data": manifest["artifacts"]["train"],
+        }
     policy.save(args.output, training)
     console.print(
         f"Trained on [bold]{len(rollouts)}[/] trajectories / "
@@ -278,6 +569,20 @@ def command_train(args: argparse.Namespace) -> None:
 
 
 def command_evaluate(args: argparse.Namespace) -> None:
+    _assert_distinct_paths(
+        data=args.data,
+        policy=args.policy,
+        output=args.output,
+        svg=args.svg,
+        html=args.html,
+        protocol=args.protocol,
+        manifest=args.manifest,
+        frozen_baselines=args.frozen_baselines,
+        export_baselines=args.export_baselines,
+    )
+    if args.frozen_baselines and args.export_baselines:
+        raise ValueError("cannot consume and export baseline selections in one evaluation")
+    protocol = None if args.protocol is None else Protocol.load(args.protocol)
     payload = _write_benchmark(
         Path(args.data),
         Path(args.policy),
@@ -285,26 +590,47 @@ def command_evaluate(args: argparse.Namespace) -> None:
         args.costs,
         bootstrap_samples=args.bootstrap_samples,
         bootstrap_seed=args.bootstrap_seed,
-        frozen_baselines=_load_frozen_baselines(args.frozen_baselines),
-        protocol_path=(None if args.protocol is None else Path(args.protocol)),
+        frozen_baseline_path=(
+            None if args.frozen_baselines is None else Path(args.frozen_baselines)
+        ),
+        protocol=protocol,
+        manifest_path=None if args.manifest is None else Path(args.manifest),
+        split=args.split,
     )
     _print_benchmark(payload)
     if args.export_baselines:
+        if protocol is None or args.split != "validation":
+            raise ValueError("baseline export requires protocol-bound validation evaluation")
         selected = {
             f"{comparison['scoring_cost']:g}": comparison["baseline_policy"]
             for comparison in payload["comparisons"]
         }
+        selection = {
+            "schema_version": 1,
+            "selection": "observed-best-on-validation",
+            "protocol": protocol.metadata(),
+            "policy": _snapshot_file(args.policy, "policy artifact"),
+            "costs": list(args.costs),
+            "validation_data": {key: payload["data"][key] for key in ("path", "bytes", "sha256")},
+            "validation_manifest": payload["data"]["manifest"],
+            "validation_benchmark": _snapshot_file(
+                args.output,
+                "validation benchmark",
+            ),
+            "baselines": selected,
+        }
         atomic_write_text(
             args.export_baselines,
-            json.dumps(selected, indent=2, sort_keys=True) + "\n",
+            json.dumps(selection, indent=2, sort_keys=True) + "\n",
         )
-        console.print(f"Froze validation-selected baselines to [cyan]{args.export_baselines}[/]")
+        console.print(f"Froze hash-bound validation baselines to [cyan]{args.export_baselines}[/]")
     if args.svg or args.html:
         write_report(args.output, args.svg, args.html)
         console.print("Rendered " + ", ".join(path for path in (args.svg, args.html) if path))
 
 
 def command_report(args: argparse.Namespace) -> None:
+    _assert_distinct_paths(benchmark=args.benchmark, svg=args.svg, html=args.html)
     if not args.svg and not args.html:
         raise ValueError("report requires --svg, --html, or both")
     write_report(args.benchmark, args.svg, args.html)
@@ -312,6 +638,7 @@ def command_report(args: argparse.Namespace) -> None:
 
 
 def command_plan(args: argparse.Namespace) -> None:
+    _assert_distinct_paths(benchmark=args.benchmark, json_output=args.json_output)
     point = load_operating_point(
         args.benchmark,
         args.sample_budget,
@@ -402,7 +729,12 @@ def command_quickstart(args: argparse.Namespace) -> None:
     payload = _write_benchmark(test_path, policy_path, benchmark_path, args.costs)
     write_report(benchmark_path, output / "pareto.svg", output / "report.html")
     _print_benchmark(payload)
-    demo_args = argparse.Namespace(data=str(test_path), policy=str(policy_path), index=0, cost=0.05)
+    demo_args = argparse.Namespace(
+        data=str(test_path),
+        policy=str(policy_path),
+        index=0,
+        cost=args.costs[len(args.costs) // 2],
+    )
     command_demo(demo_args)
     console.print(f"Open [cyan]{output / 'report.html'}[/] for the standalone report.")
 
@@ -454,6 +786,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=_costs,
         default=_costs("0,0.01,0.025,0.05,0.075,0.1,0.15,0.25"),
     )
+    train.add_argument("--protocol", help="frozen benchmark protocol JSON")
+    train.add_argument("--manifest", help="hash-bound generation manifest")
     train.set_defaults(handler=command_train)
 
     evaluate = subparsers.add_parser(
@@ -473,9 +807,11 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--bootstrap-seed", type=int, default=17)
     evaluate.add_argument(
         "--frozen-baselines",
-        help="JSON object mapping every evaluation cost to a validation-selected policy name",
+        help="hash-bound validation baseline selection record",
     )
     evaluate.add_argument("--protocol", help="frozen benchmark protocol JSON")
+    evaluate.add_argument("--manifest", help="hash-bound generation manifest")
+    evaluate.add_argument("--split", choices=("validation", "test"))
     evaluate.add_argument(
         "--export-baselines",
         help="write the observed-best comparator names for later frozen test evaluation",

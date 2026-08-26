@@ -30,12 +30,13 @@ def _normalized_question(question: str) -> str:
 
 
 def _prompt_payload(rollout: Rollout) -> dict[str, str]:
-    return {"gold": rollout.gold, "question": _normalized_question(rollout.question)}
+    return {"question": _normalized_question(rollout.question)}
 
 
 def _rollout_payload(rollout: Rollout) -> dict[str, Any]:
     return {
         **_prompt_payload(rollout),
+        "gold": rollout.gold,
         "prompt_tokens": rollout.prompt_tokens,
         "samples": [
             {
@@ -50,7 +51,7 @@ def _rollout_payload(rollout: Rollout) -> dict[str, Any]:
 
 
 def prompt_fingerprint(rollout: Rollout) -> str:
-    """Return the stable identity of a rollout's normalized prompt and gold answer."""
+    """Return the stable identity of the model-visible normalized question."""
 
     return _fingerprint(_prompt_payload(rollout))
 

@@ -187,6 +187,9 @@ class OpenAIChatSampler:
         if finish_reason == "length":
             answer = None
             parse_status = "truncated"
+        elif finish_reason != "stop":
+            answer = None
+            parse_status = "incomplete"
         else:
             answer = self.extractor(text)
             if answer is not None and not isinstance(answer, str):

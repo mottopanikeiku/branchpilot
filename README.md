@@ -135,7 +135,7 @@ Install the optional client with `uv sync --extra openai`. The adapter requires 
 
 ## Run the frozen Modal benchmark
 
-[`benchmarks/protocol.json`](benchmarks/protocol.json) fixes the dataset/model revisions, original split sizes, sample bank, controller configuration, baseline grid, bootstrap method, success rule, and limitations before canonical generation. The CUDA image is pinned by digest; generated manifests record resolved dataset fingerprints, source indices, prompt/parser hashes, package versions, GPU, parse/truncation counts, tokens, and timing.
+[`benchmarks/protocol.json`](benchmarks/protocol.json) fixes the source/model revisions and hashes, immutable vLLM image digest, split sizes, sample bank, controller, baseline grid, bootstrap, success rule, and limitations before canonical generation. Collection downloads the original GSM8K JSONL at a pinned commit and verifies predeclared hashes, resolves the pinned model into a fresh ephemeral cache, inventories every model/tokenizer file and installed package, captures clean source hashes before dispatch, and publishes the three banks plus manifest as one atomic hash-bound directory.
 
 ```bash
 uv sync --extra dev --extra modal
@@ -145,9 +145,13 @@ modal setup
 uv run modal run modal_app.py \
   --train-size 1600 --validation-size 400 --test-size 1319 \
   --max-samples 8 --max-tokens 512 --seed 17 \
+  --protocol benchmarks/protocol.json \
   --output-dir artifacts/gsm8k-v2
 
-# Fail closed on duplicate or overlapping identities.
+# Preserve the generation manifest as canonical small evidence.
+cp artifacts/gsm8k-v2/manifest.json benchmarks/manifest-v2.json
+
+# Fail closed on duplicate or overlapping model-visible prompts.
 uv run branchpilot audit \
   --data artifacts/gsm8k-v2/train.jsonl \
   --compare artifacts/gsm8k-v2/validation.jsonl
@@ -158,34 +162,42 @@ uv run branchpilot audit \
 uv run branchpilot train \
   --data artifacts/gsm8k-v2/train.jsonl \
   --output artifacts/gsm8k-v2/policy.safetensors \
-  --hidden-size 128 --epochs 120 --seed 23
+  --hidden-size 128 --epochs 120 --seed 23 \
+  --protocol benchmarks/protocol.json \
+  --manifest benchmarks/manifest-v2.json
 
-# Select comparators on validation and freeze their exact names.
+# Select comparators on validation; bind names to data, policy, protocol, and benchmark hashes.
 uv run branchpilot evaluate \
   --data artifacts/gsm8k-v2/validation.jsonl \
   --policy artifacts/gsm8k-v2/policy.safetensors \
-  --output artifacts/gsm8k-v2/validation-benchmark.json \
-  --export-baselines artifacts/gsm8k-v2/frozen-baselines.json \
-  --protocol benchmarks/protocol.json
+  --output benchmarks/gsm8k-v2-validation.json \
+  --export-baselines benchmarks/gsm8k-v2-baselines.json \
+  --protocol benchmarks/protocol.json \
+  --manifest benchmarks/manifest-v2.json \
+  --split validation
+
+# Commit protocol + manifest + validation benchmark + selection before test evaluation.
 
 # Turn an average serving budget into a validation-measured λ.
 uv run branchpilot plan \
-  --benchmark artifacts/gsm8k-v2/validation-benchmark.json \
+  --benchmark benchmarks/gsm8k-v2-validation.json \
   --sample-budget 3.0 \
   --json-output artifacts/gsm8k-v2/operating-point.json
 
-# Evaluate the frozen policy/comparators once on official test.
+# Evaluate the committed policy/comparator binding once on official test.
 uv run branchpilot evaluate \
   --data artifacts/gsm8k-v2/test.jsonl \
   --policy artifacts/gsm8k-v2/policy.safetensors \
-  --frozen-baselines artifacts/gsm8k-v2/frozen-baselines.json \
+  --frozen-baselines benchmarks/gsm8k-v2-baselines.json \
   --protocol benchmarks/protocol.json \
-  --output artifacts/gsm8k-v2/benchmark.json \
-  --svg artifacts/gsm8k-v2/pareto.svg \
-  --html artifacts/gsm8k-v2/report.html
+  --manifest benchmarks/manifest-v2.json \
+  --split test \
+  --output benchmarks/gsm8k-v2.json \
+  --svg assets/gsm8k-v2-pareto.svg \
+  --html benchmarks/report-v2.html
 ```
 
-The report publishes all fixed counts 1–8, the complete confidence/agreement grids, paired prompt-bootstrap intervals, validation-frozen comparator names, data/policy/protocol hashes, and the declared single-model/single-task limitations. Results are published unchanged whether the prespecified success rule passes or fails.
+The report publishes all fixed counts 1–8, complete confidence/agreement grids, retained prompt-paired outcomes, bootstrap intervals, the validation-selection chain, primary-versus-sensitivity costs, exact pass/fail rule, source/data/policy/protocol hashes, and every declared limitation. Results are published unchanged whether the prespecified rule passes or fails.
 
 ## CLI
 
@@ -225,6 +237,7 @@ src/branchpilot/
   evaluate.py     exhaustive baselines, paired bootstrap, retained outcomes
   calibration.py  validation-based average-budget operating-point selection
   integrity.py    canonical fingerprints, overlap checks, dataset profiles
+  provenance.py   frozen protocol and byte-exact manifest verification
   report.py       interactive dependency-free HTML + accessible SVG evidence
   artifacts.py    atomic writes, hashes, and output alias checks
   integrations/   request-exact OpenAI-compatible async sampling

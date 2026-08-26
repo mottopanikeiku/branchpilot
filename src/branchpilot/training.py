@@ -13,7 +13,13 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
 from branchpilot.features import FEATURE_NAMES, prefix_correct, prefix_state
-from branchpilot.policy import BranchPilotPolicy
+from branchpilot.policy import (
+    MAX_COSTS,
+    MAX_HIDDEN_SIZE,
+    MAX_SAMPLES,
+    TRAINING_ALGORITHM,
+    BranchPilotPolicy,
+)
 from branchpilot.schema import Rollout
 
 
@@ -52,13 +58,17 @@ def _seed_everything(seed: int) -> None:
 
 
 def _validate_config(config: TrainConfig) -> tuple[float, ...]:
-    if config.max_samples < 1 or config.hidden_size < 1:
-        raise ValueError("max_samples and hidden_size must be positive")
+    if config.max_samples < 1 or config.max_samples > MAX_SAMPLES:
+        raise ValueError(f"max_samples must be in [1, {MAX_SAMPLES}]")
+    if config.hidden_size < 1 or config.hidden_size > MAX_HIDDEN_SIZE:
+        raise ValueError(f"hidden_size must be in [1, {MAX_HIDDEN_SIZE}]")
     if config.epochs < 1 or config.batch_size < 1:
         raise ValueError("epochs and batch_size must be positive")
     if not math.isfinite(config.learning_rate) or config.learning_rate <= 0:
         raise ValueError("learning_rate must be finite and positive")
     costs = tuple(float(cost) for cost in config.costs)
+    if len(costs) > MAX_COSTS:
+        raise ValueError(f"training costs cannot exceed {MAX_COSTS} entries")
     if not costs or any(not math.isfinite(cost) or cost < 0 for cost in costs):
         raise ValueError("training costs must be a non-empty finite non-negative sequence")
     if any(left >= right for left, right in pairwise(costs)):
@@ -207,7 +217,7 @@ def train_policy(
         epoch_loss = total_loss / max(1, batches)
 
     training = {
-        "algorithm": "exact-backward-q-regression-v1",
+        "algorithm": TRAINING_ALGORITHM,
         "config": asdict(config),
         "rollouts": len(rollouts),
         "base_states": base_states,

@@ -102,6 +102,17 @@ def test_parse_provenance_statuses_are_validated() -> None:
         Sample("truncated", None, 5, parse_status="parsed_explicit")
 
 
+@pytest.mark.parametrize("status", ("incomplete", "truncated", "unparsed"))
+def test_non_voting_parse_status_rejects_answers(status: str) -> None:
+    with pytest.raises(ValueError, match="cannot have an answer"):
+        Sample("partial #### 42", "42", 5, parse_status=status)
+
+
+def test_length_finish_reason_requires_truncated_status() -> None:
+    with pytest.raises(ValueError, match="must be marked truncated"):
+        Sample("partial", None, 5, finish_reason="length", parse_status="incomplete")
+
+
 def test_non_finite_logprob_is_rejected() -> None:
     with pytest.raises(ValueError, match="finite"):
         Sample("#### 42", "42", 2, float("nan"))

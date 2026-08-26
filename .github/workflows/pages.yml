@@ -22,13 +22,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          python-version: "3.14"
+      - name: Verify canonical schema-v2 evidence
+        run: |
+          uv sync --locked
+          uv run branchpilot report \
+            --benchmark benchmarks/gsm8k-v2.json \
+            --html /tmp/report-v2.html \
+            --svg /tmp/gsm8k-v2-pareto.svg
+          cmp /tmp/report-v2.html benchmarks/report-v2.html
+          cmp /tmp/gsm8k-v2-pareto.svg assets/gsm8k-v2-pareto.svg
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
       - name: Assemble static evidence portal
         run: |
           mkdir -p _site/assets
-          cp benchmarks/report.html _site/index.html
+          cp benchmarks/report-v2.html _site/index.html
           cp benchmarks/*.json _site/
-          cp assets/gsm8k-pareto.svg _site/assets/
+          cp assets/gsm8k-v2-pareto.svg _site/assets/
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
       - name: Deploy
         id: deployment
