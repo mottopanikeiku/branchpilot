@@ -10,6 +10,12 @@ import numpy as np
 from branchpilot.features import prefix_state
 from branchpilot.policy import BranchPilotPolicy, Decision
 from branchpilot.schema import Rollout
+from branchpilot.strategies import (
+    ConsecutiveAgreementStrategy,
+    FixedStrategy,
+    StoppingStrategy,
+    VoteConfidenceStrategy,
+)
 
 StopRule = Callable[[Rollout], int]
 BOOTSTRAP_CONFIDENCE = 0.95
@@ -284,46 +290,69 @@ def _measure(
     return _Measurement(metrics, correct_values, count_values, token_values, utilities)
 
 
-def fixed_rule(samples: int) -> StopRule:
-    if samples < 1:
-        raise ValueError("fixed sample count must be positive")
-    return lambda rollout: min(samples, len(rollout.samples))
+def _strategy_rule(
+    factory: Callable[[int], StoppingStrategy],
+    max_samples: int | None = None,
+) -> StopRule:
+    def stop(rollout: Rollout) -> int:
+        horizon = min(len(rollout.samples), max_samples or len(rollout.samples))
+        strategy = factory(horizon)
+        for count in range(1, horizon + 1):
+            decision = strategy.decide_observed(
+                rollout.question,
+                rollout.samples[:count],
+                0.0,
+                prompt_tokens=rollout.prompt_tokens,
+                max_samples=horizon,
+            )
+            if decision.action == "stop":
+                return count
+        raise RuntimeError("strategy failed to stop at its horizon")
+
+    return stop
 
 
-def confidence_rule(threshold: float, minimum: int = 2) -> StopRule:
+def fixed_rule(samples: int, max_samples: int | None = None) -> StopRule:
+    if type(samples) is not int or samples < 1:
+        raise ValueError("fixed sample count must be a positive integer")
+    return _strategy_rule(
+        lambda horizon: FixedStrategy(
+            samples=min(samples, horizon),
+            max_samples=horizon,
+        ),
+        max_samples,
+    )
+
+
+def confidence_rule(
+    threshold: float,
+    minimum: int = 2,
+    max_samples: int | None = None,
+) -> StopRule:
     if not math.isfinite(threshold) or threshold <= 0.0 or threshold > 1.0:
         raise ValueError("confidence threshold must be within (0, 1]")
-    if minimum < 1:
-        raise ValueError("confidence minimum must be positive")
+    if type(minimum) is not int or minimum < 1:
+        raise ValueError("confidence minimum must be a positive integer")
+    return _strategy_rule(
+        lambda horizon: VoteConfidenceStrategy(
+            threshold=float(threshold),
+            minimum=min(minimum, horizon),
+            max_samples=horizon,
+        ),
+        max_samples,
+    )
 
-    def stop(rollout: Rollout) -> int:
-        for count in range(minimum, len(rollout.samples) + 1):
-            state = prefix_state(rollout, count, len(rollout.samples))
-            if state.top_votes / count >= threshold:
-                return count
-        return len(rollout.samples)
 
-    return stop
-
-
-def agreement_rule(streak: int) -> StopRule:
-    if streak < 1:
-        raise ValueError("agreement streak must be positive")
-
-    def stop(rollout: Rollout) -> int:
-        run = 0
-        previous: str | None = None
-        for index, sample in enumerate(rollout.samples, start=1):
-            if sample.answer is not None and sample.answer == previous:
-                run += 1
-            else:
-                run = 1
-                previous = sample.answer
-            if run >= streak:
-                return index
-        return len(rollout.samples)
-
-    return stop
+def agreement_rule(streak: int, max_samples: int | None = None) -> StopRule:
+    if type(streak) is not int or streak < 1:
+        raise ValueError("agreement streak must be a positive integer")
+    return _strategy_rule(
+        lambda horizon: ConsecutiveAgreementStrategy(
+            streak=min(streak, horizon),
+            max_samples=horizon,
+        ),
+        max_samples,
+    )
 
 
 def learned_rule(policy: BranchPilotPolicy, cost: float) -> StopRule:
@@ -419,7 +448,7 @@ def benchmark(
             measured.append(
                 _measure(
                     rollouts,
-                    fixed_rule(count),
+                    fixed_rule(count, max_samples),
                     f"fixed-{count}",
                     "fixed",
                     cost,
@@ -431,7 +460,7 @@ def benchmark(
             measured.append(
                 _measure(
                     rollouts,
-                    confidence_rule(threshold),
+                    confidence_rule(threshold, max_samples=max_samples),
                     f"confidence-{threshold:g}",
                     "heuristic",
                     cost,
@@ -443,7 +472,7 @@ def benchmark(
             measured.append(
                 _measure(
                     rollouts,
-                    agreement_rule(streak),
+                    agreement_rule(streak, max_samples=max_samples),
                     f"agreement-{streak}",
                     "heuristic",
                     cost,

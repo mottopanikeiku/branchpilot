@@ -10,7 +10,6 @@ import pytest
 
 from branchpilot.integrations.openai import OpenAIChatSampler, run_openai
 from branchpilot.policy import Decision
-from branchpilot.runtime import PilotSession
 from branchpilot.schema import Sample
 
 _MISSING = object()
@@ -73,24 +72,7 @@ class FakePolicy:
     def __init__(self, *, max_samples: int = 5, stop_after: int = 2) -> None:
         self.max_samples = max_samples
         self.stop_after = stop_after
-        self.start_calls: list[tuple[str, float, int, int | None]] = []
-
-    def start(
-        self,
-        question: str,
-        cost: float,
-        *,
-        prompt_tokens: int = 0,
-        max_samples: int | None = None,
-    ) -> PilotSession:
-        self.start_calls.append((question, cost, prompt_tokens, max_samples))
-        return PilotSession(
-            self,
-            question,
-            cost,
-            prompt_tokens=prompt_tokens,
-            max_samples=max_samples,
-        )
+        self.decide_calls: list[tuple[str, float, int, int | None, int]] = []
 
     def decide_observed(
         self,
@@ -101,6 +83,7 @@ class FakePolicy:
         prompt_tokens: int = 0,
         max_samples: int | None = None,
     ) -> Decision:
+        self.decide_calls.append((question, cost, prompt_tokens, max_samples, len(samples)))
         horizon = self.max_samples if max_samples is None else max_samples
         action = "stop" if len(samples) >= min(self.stop_after, horizon) else "continue"
         return Decision(
@@ -177,7 +160,10 @@ def test_run_openai_stops_live_requests_and_forwards_request_configuration() -> 
             "logprobs": True,
         },
     ]
-    assert policy.start_calls == [("What is 6 * 7?", 0.25, 9, 4)]
+    assert policy.decide_calls == [
+        ("What is 6 * 7?", 0.25, 9, 4, 1),
+        ("What is 6 * 7?", 0.25, 9, 4, 2),
+    ]
     assert result.sample_count == 2
     assert result.answer == "42"
     assert result.completion_tokens == 8

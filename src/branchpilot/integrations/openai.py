@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-from branchpilot.runtime import PilotResult
+from branchpilot.runtime import PilotResult, PilotSession
 from branchpilot.schema import Sample
 
 _RESERVED_REQUEST_OPTIONS = frozenset({"model", "messages", "n", "stream"})
@@ -226,7 +226,8 @@ async def run_openai(
         extractor,
         request_options=request_options,
     )
-    session = policy.start(
+    session = PilotSession(
+        policy,
         question,
         cost,
         prompt_tokens=prompt_tokens,

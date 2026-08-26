@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.table import Table
 
 from branchpilot.artifacts import atomic_write_bytes, atomic_write_text, paths_alias
-from branchpilot.calibration import load_operating_point
+from branchpilot.calibration import load_deployment_plan
 from branchpilot.evaluate import (
     AGREEMENT_STREAKS,
     BOOTSTRAP_CONFIDENCE,
@@ -808,39 +808,51 @@ def command_report(args: argparse.Namespace) -> None:
 
 def command_plan(args: argparse.Namespace) -> None:
     _assert_distinct_paths(benchmark=args.benchmark, json_output=args.json_output)
-    point = load_operating_point(
+    aliases = {
+        "learned": "offline-rl",
+        "fixed": "fixed",
+        "heuristic": "heuristic",
+    }
+    families = None if not args.family else tuple(aliases[name] for name in args.family)
+    plan = load_deployment_plan(
         args.benchmark,
         args.sample_budget,
         conservative=not args.point_estimate,
+        families=families,
     )
-    table = Table(title="Validation-calibrated operating point", header_style="bold cyan")
+    table = Table(title="Validation-calibrated deployment plan", header_style="bold cyan")
     table.add_column("measure")
     table.add_column("value", justify="right")
-    table.add_row("decision cost λ", f"{point.cost:g}")
+    table.add_row("family", plan.family)
+    table.add_row("policy", plan.policy)
+    table.add_row(
+        "strategy spec",
+        json.dumps(plan.to_dict()["strategy_spec"], separators=(",", ":"), sort_keys=True),
+    )
     table.add_row(
         "accuracy",
-        f"{point.expected_accuracy:.1%} "
-        f"[{point.accuracy_interval.lower:.1%}, {point.accuracy_interval.upper:.1%}]",
+        f"{plan.expected_accuracy:.1%} "
+        f"[{plan.accuracy_interval.lower:.1%}, {plan.accuracy_interval.upper:.1%}]",
     )
     table.add_row(
         "average samples",
-        f"{point.expected_samples:.2f} "
-        f"[{point.samples_interval.lower:.2f}, {point.samples_interval.upper:.2f}]",
+        f"{plan.expected_samples:.2f} "
+        f"[{plan.samples_interval.lower:.2f}, {plan.samples_interval.upper:.2f}]",
     )
-    table.add_row("requested budget", f"{point.requested_sample_budget:.2f} average samples")
-    table.add_row("validation feasibility", "satisfied" if point.budget_satisfied else "not met")
+    table.add_row("requested budget", f"{plan.requested_sample_budget:.2f} average samples")
+    table.add_row("validation feasibility", "satisfied" if plan.budget_satisfied else "not met")
     console.print(table)
-    if not point.budget_satisfied:
+    if not plan.budget_satisfied:
         console.print(
-            "[yellow]No measured learned point met this validation budget; "
+            "[yellow]No measured deployable strategy met this validation budget; "
             "showing the minimum-compute point without claiming feasibility.[/]"
         )
     if args.json_output:
         atomic_write_text(
             args.json_output,
-            json.dumps(point.to_dict(), indent=2, sort_keys=True) + "\n",
+            json.dumps(plan.to_dict(), indent=2, sort_keys=True) + "\n",
         )
-        console.print(f"Wrote operating point to [cyan]{args.json_output}[/]")
+        console.print(f"Wrote deployment plan to [cyan]{args.json_output}[/]")
 
 
 def command_demo(args: argparse.Namespace) -> None:
@@ -1004,6 +1016,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--point-estimate",
         action="store_true",
         help="use measured average samples instead of the conservative 95%% upper bound",
+    )
+    plan.add_argument(
+        "--family",
+        action="append",
+        choices=("learned", "fixed", "heuristic"),
+        help="limit candidates; repeat to allow several families (default: all)",
     )
     plan.add_argument("--json-output")
     plan.set_defaults(handler=command_plan)
