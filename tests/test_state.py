@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from branchpilot.features import FEATURE_NAMES, prefix_state
+from branchpilot.features import FEATURE_NAMES, observed_state, prefix_state
 from branchpilot.schema import Rollout, Sample, read_jsonl, write_jsonl
 
 
@@ -15,7 +15,7 @@ def _rollout() -> Rollout:
         samples=(
             Sample("#### 41", "41", 12, -0.9),
             Sample("#### 42", "42", 10, -0.1),
-            Sample("unparsed", None, 8, -2.0),
+            Sample("unparsed", None, 8, None),
         ),
         prompt_tokens=9,
     )
@@ -30,6 +30,21 @@ def test_tied_vote_uses_sequence_confidence() -> None:
     assert np.isfinite(state.features).all()
 
 
+def test_tied_vote_without_confidence_is_label_invariant() -> None:
+    first = observed_state(
+        "question",
+        (Sample("z", "z", 1), Sample("a", "a", 1)),
+        2,
+    )
+    renamed = observed_state(
+        "question",
+        (Sample("a", "a", 1), Sample("z", "z", 1)),
+        2,
+    )
+    assert first.majority_answer == "z"
+    assert renamed.majority_answer == "a"
+
+
 def test_unparsed_samples_never_form_false_consensus() -> None:
     rollout = Rollout(
         uid="unparsed",
@@ -40,6 +55,16 @@ def test_unparsed_samples_never_form_false_consensus() -> None:
     state = prefix_state(rollout, 2)
     assert state.majority_answer is None
     assert state.top_votes == 1
+    assert state.features[FEATURE_NAMES.index("parse_rate")] == 0.0
+    assert state.features[FEATURE_NAMES.index("logprob_coverage")] == 0.0
+
+
+def test_live_and_offline_state_construction_are_identical() -> None:
+    rollout = _rollout()
+    offline = prefix_state(rollout, 2, 3)
+    live = observed_state(rollout.question, rollout.samples[:2], 3, rollout.prompt_tokens)
+    np.testing.assert_array_equal(live.features, offline.features)
+    assert live.majority_answer == offline.majority_answer
 
 
 def test_jsonl_round_trip(tmp_path: Path) -> None:

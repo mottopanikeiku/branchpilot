@@ -2,7 +2,7 @@
 
 # BranchPilot
 
-**A budget-conditioned offline RL controller that learns when one more LLM reasoning sample is worth its GPU time.**
+**A lightweight cost-conditioned controller that stops LLM self-consistency at the prompt-specific point of diminishing returns.**
 
 [![CI](https://github.com/mottopanikeiku/branchpilot/actions/workflows/ci.yml/badge.svg)](https://github.com/mottopanikeiku/branchpilot/actions/workflows/ci.yml)
 [![Live report](https://img.shields.io/badge/Live-Benchmark%20Report-C4B5FD)](https://mottopanikeiku.github.io/branchpilot/)
@@ -14,13 +14,13 @@
 
 </div>
 
-Most inference-time scaling systems pick one global sample count: cheap prompts are overthought; hard prompts are abandoned too early. BranchPilot turns that systems decision into an optimal-stopping MDP. A single universal Q-network observes agreement, answer entropy, sequence confidence, completion length, prompt structure, remaining horizon, and a user-selected cost $\lambda$. It chooses **STOP** or **CONTINUE** after every sample.
+Most inference-time scaling systems pick one global sample count: easy prompts are overthought; hard prompts are abandoned too early. BranchPilot turns that systems decision into an observable finite-horizon stopping problem. A single universal Q-network watches agreement, parse coverage, answer entropy, sequence confidence, completion length, prompt structure, remaining horizon, and a user-selected cost $\lambda$. It chooses **STOP** or **CONTINUE** after every observed sample.
 
-No policy rollouts are thrown away. BranchPilot trains offline from complete response trajectories, evaluates every prefix's counterfactual STOP reward, and learns the value of requesting the next sample.
+Complete offline trajectories expose the STOP reward and next prefix at every step. BranchPilot solves each logged trajectory exactly by backward induction, then distills those counterfactual Q-values into one cost-conditioned policy. Deployment uses a Torch-free NumPy runtime and bounded, non-executable Safetensors artifacts.
 
-## Results
+## Exploratory v0.1 result
 
-Reproducible Modal benchmark: **Qwen2.5-1.5B-Instruct**, 8 stochastic samples per prompt, 512 controller-training trajectories, and 256 disjoint held-out GSM8K trajectories. Every baseline sees the same samples, answer parser, tie-breaker, and maximum horizon.
+The currently committed benchmark is an exploratory point-estimate study from the original v0.1 pipeline: **Qwen2.5-1.5B-Instruct**, 8 stochastic samples per prompt, 512 controller-training trajectories, and 256 controller-held-out trajectories drawn from GSM8K train. It uses one generation seed, one controller seed, a sparse baseline grid, and no confidence intervals. It is retained for provenance while the preregistered official-test benchmark is regenerated with the v0.2 evaluation protocol.
 
 | Policy | Accuracy | Avg. samples | Comparison |
 |---|---:|---:|---|
@@ -30,7 +30,7 @@ Reproducible Modal benchmark: **Qwen2.5-1.5B-Instruct**, 8 stochastic samples pe
 | **BranchPilot $\lambda=0.025$** | **68.8%** | **3.71** | **+2.0 points with 7.1% fewer samples** |
 | fixed-8 | 73.4% | 8.00 | maximum-compute ceiling |
 
-At the tested utility $U=\text{accuracy}-\lambda\times\text{samples}$, the learned controller beats every fixed-count and agreement/confidence baseline at $\lambda\in\{0.05,0.075,0.10\}$. Full results—not selected rows—live in [`benchmarks/gsm8k.json`](benchmarks/gsm8k.json), with provenance in [`benchmarks/manifest.json`](benchmarks/manifest.json) and a standalone report in [`benchmarks/report.html`](benchmarks/report.html).
+The observed v0.1 utility $U=\text{accuracy}-\lambda\times\text{samples}$ favored the learned controller over the listed fixed-count and agreement/confidence baselines at $\lambda\in\{0.05,0.075,0.10\}$. This is not yet a confirmatory or generality claim. Full aggregate rows live in [`benchmarks/gsm8k.json`](benchmarks/gsm8k.json), with recorded provenance in [`benchmarks/manifest.json`](benchmarks/manifest.json) and the standalone report in [`benchmarks/report.html`](benchmarks/report.html).
 
 ## How it works
 
@@ -38,13 +38,13 @@ At the tested utility $U=\text{accuracy}-\lambda\times\text{samples}$, the learn
 flowchart LR
     P[Prompt] --> M[LLM sample]
     M --> A[Parse + aggregate answers]
-    A --> S[12-D inference state]
+    A --> S[15-D observable state]
     S --> Q[Cost-conditioned Q-network]
     Q -->|CONTINUE| M
     Q -->|STOP| O[Majority answer]
 
     T[Logged complete trajectories] --> R[Counterfactual prefix rewards]
-    R --> D[Double fitted Q-learning]
+    R --> D[Exact backward induction]
     D --> Q
 ```
 
@@ -59,13 +59,13 @@ $$
 Q(s_t,\mathrm{CONTINUE};\lambda)=-\lambda+\max_a Q(s_{t+1},a;\lambda)
 $$
 
-The 12 observable state features include vote share and margin, normalized answer entropy, diversity, mean and variance of completion log-probability, latest-sample agreement, completion-length statistics, prompt length, and numeric density. Three conditioning features add $\lambda$, normalized remaining horizon, and their interaction. One 128-wide network therefore learns an entire accuracy–compute frontier instead of requiring one model per budget.
+The 15 observable features include vote share and margin, normalized answer entropy, diversity, parse and log-probability coverage, finite sequence-confidence statistics, latest-sample agreement, completion-length statistics, prompt token/character length, numeric density, and horizon progress. Three conditioning features add $\lambda$, normalized remaining horizon, and their interaction. One network covers the declared training-cost interval; inference applies isotonic advantage projection so higher cost cannot make a shared prefix more likely to continue.
 
-Training uses Double DQN action selection, a lagged target network, Huber loss, gradient clipping, deterministic seeds, and explicit terminal-action masking. Policy artifacts use restricted `weights_only=True` loading plus schema, shape, finiteness, and normalization checks.
+Training regresses exact finite-horizon Q-targets with Huber loss, deterministic seeds, gradient clipping, and explicit terminal-action masking. PyTorch is isolated to the optional training environment. Deployment and evaluation need only NumPy plus Safetensors; policy artifacts are non-pickle, strictly schema/shape/dtype/finiteness checked, size-bounded, and written atomically.
 
 ## Five-minute local demo
 
-No model download or GPU required. The quickstart builds correlated reasoning trajectories, trains the controller, evaluates nine fixed/heuristic baselines, renders the Pareto report, and prints a live Q-value trace.
+No model download or GPU required. The quickstart builds correlated reasoning trajectories, trains the controller with the `train` extra, evaluates fixed/heuristic baselines, renders the Pareto report, and prints a Q-value trace.
 
 ```bash
 git clone https://github.com/mottopanikeiku/branchpilot
@@ -80,9 +80,36 @@ Inspect a specific decision path:
 ```bash
 uv run branchpilot demo \
   --data artifacts/quickstart/test.jsonl \
-  --policy artifacts/quickstart/policy.pt \
+  --policy artifacts/quickstart/policy.safetensors \
   --cost 0.05 --index 7
 ```
+
+## Live inference API
+
+Offline labels train the policy; deployment never receives a gold answer or future sample. Feed one canonicalized observation at a time and stop launching model requests as soon as the policy stops:
+
+```python
+from branchpilot import BranchPilotPolicy, Sample
+
+policy = BranchPilotPolicy.load("policy.safetensors")
+session = policy.start("What is 17 + 25?", cost=0.05, max_samples=8)
+
+while session.should_continue:
+    output = generate_one_sample()  # your vLLM, SGLang, or API call
+    session.observe(
+        Sample(
+            text=output.text,
+            answer=parse_answer(output.text),
+            token_count=output.token_count,
+            mean_logprob=output.mean_logprob,
+        )
+    )
+
+result = session.result()
+print(result.answer, result.sample_count, result.completion_tokens)
+```
+
+`PilotSession.run` and `run_async` provide callback loops with the same invariant: the sampler is called exactly once per observed decision and never after STOP.
 
 ## Reproduce the Modal benchmark
 
@@ -106,12 +133,12 @@ uv run branchpilot split \
 
 uv run branchpilot train \
   --data artifacts/gsm8k/controller-train.jsonl \
-  --output artifacts/gsm8k/policy.pt \
+  --output artifacts/gsm8k/policy.safetensors \
   --hidden-size 128 --epochs 120 --seed 23
 
 uv run branchpilot evaluate \
   --data artifacts/gsm8k/controller-test.jsonl \
-  --policy artifacts/gsm8k/policy.pt \
+  --policy artifacts/gsm8k/policy.safetensors \
   --output artifacts/gsm8k/benchmark.json \
   --svg artifacts/gsm8k/pareto.svg \
   --html artifacts/gsm8k/report.html
@@ -140,17 +167,20 @@ BranchPilot is model-server agnostic. A JSONL trajectory needs a prompt, canonic
 {"uid":"gsm8k-train-0","question":"...","gold":"72","samples":[{"text":"... #### 72","answer":"72","token_count":94,"mean_logprob":-0.31}],"prompt_tokens":81,"metadata":{"model":"Qwen/Qwen2.5-1.5B-Instruct"}}
 ```
 
-Numeric answers are canonicalized across comma, decimal, fraction, `####`, XML, and LaTeX-boxed forms. Unparsed samples remain distinct and can never manufacture false consensus.
+Benchmark collection uses strict final-answer delimiters (`####`, XML, or LaTeX boxed forms) before canonicalizing comma, decimal, signed, and fractional numeric values. Unparsed samples remain distinct and can never manufacture false consensus; permissive last-number extraction is explicit opt-in only.
 
 ## Repository map
 
 ```text
 src/branchpilot/
-  answers.py      numeric answer extraction and canonicalization
-  features.py     prefix aggregation and inference state
-  policy.py       budget-conditioned Double DQN and safe artifacts
-  evaluate.py     fixed, confidence, agreement, and RL policies
+  answers.py      strict answer extraction and numeric canonicalization
+  features.py     offline/live prefix aggregation and 15-D state
+  policy.py       Torch-free NumPy inference and safe Safetensors artifacts
+  runtime.py      label-free sync/async incremental inference sessions
+  training.py     exact backward Q-targets and optional PyTorch fitting
+  evaluate.py     fixed, confidence, agreement, and learned policies
   report.py       dependency-free SVG + standalone HTML research report
+  artifacts.py    atomic writes, hashes, and output alias checks
   synthetic.py    zero-GPU correlated reasoning environment
   cli.py          end-to-end command interface
 modal_app.py       pinned vLLM rollout collection on Modal L4

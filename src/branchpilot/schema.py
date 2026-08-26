@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from branchpilot.artifacts import atomic_text_writer
+
 SCHEMA_VERSION = 1
 
 
@@ -24,7 +26,6 @@ class Sample:
             raise ValueError("sample token_count cannot be negative")
         if self.mean_logprob is not None and not math.isfinite(self.mean_logprob):
             raise ValueError("sample mean_logprob must be finite")
-
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> Sample:
@@ -93,8 +94,7 @@ def read_jsonl(path: str | Path) -> list[Rollout]:
 
 def write_jsonl(path: str | Path, records: Iterable[Rollout]) -> None:
     destination = Path(path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with destination.open("w", encoding="utf-8") as handle:
+    with atomic_text_writer(destination) as handle:
         for record in records:
             handle.write(json.dumps(record.to_dict(), separators=(",", ":"), sort_keys=True))
             handle.write("\n")

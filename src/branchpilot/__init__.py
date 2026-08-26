@@ -1,7 +1,21 @@
-"""BranchPilot: budget-conditioned RL for adaptive inference-time compute."""
+"""BranchPilot: budget-conditioned adaptive inference control."""
 
-from branchpilot.policy import BranchPilotPolicy
+from importlib.metadata import PackageNotFoundError, version
+
+from branchpilot.policy import BranchPilotPolicy, Decision
+from branchpilot.runtime import PilotResult, PilotSession
 from branchpilot.schema import Rollout, Sample
 
-__all__ = ["BranchPilotPolicy", "Rollout", "Sample"]
-__version__ = "0.1.0"
+__all__ = [
+    "BranchPilotPolicy",
+    "Decision",
+    "PilotResult",
+    "PilotSession",
+    "Rollout",
+    "Sample",
+]
+
+try:
+    __version__ = version("branchpilot")
+except PackageNotFoundError:  # pragma: no cover - source tree without installation
+    __version__ = "0+unknown"

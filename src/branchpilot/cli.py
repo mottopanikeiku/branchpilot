@@ -9,13 +9,26 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
+from branchpilot.artifacts import atomic_write_text
 from branchpilot.evaluate import benchmark, decision_trace, pareto_frontier
-from branchpilot.policy import BranchPilotPolicy, TrainConfig, train_policy
+from branchpilot.policy import BranchPilotPolicy
 from branchpilot.report import write_report
 from branchpilot.schema import read_jsonl, write_jsonl
 from branchpilot.synthetic import make_synthetic_rollouts
 
 console = Console()
+
+
+def _training_api():
+    try:
+        from branchpilot.training import TrainConfig, train_policy
+    except ModuleNotFoundError as exc:
+        if exc.name == "torch":
+            raise SystemExit(
+                "Training requires PyTorch. Install BranchPilot with the 'train' extra."
+            ) from exc
+        raise
+    return TrainConfig, train_policy
 
 
 def _costs(value: str) -> tuple[float, ...]:
@@ -47,8 +60,7 @@ def _write_benchmark(
         "rows": [row.to_dict() for row in rows],
         "pareto_frontier": [row.to_dict() for row in pareto_frontier(rows)],
     }
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    atomic_write_text(output, json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return payload
 
 
@@ -86,8 +98,7 @@ def command_synthetic(args: argparse.Namespace) -> None:
     write_jsonl(output / "train.jsonl", train)
     write_jsonl(output / "test.jsonl", test)
     console.print(
-        f"Wrote [bold]{len(train)}[/] train and [bold]{len(test)}[/] "
-        f"test trajectories to {output}"
+        f"Wrote [bold]{len(train)}[/] train and [bold]{len(test)}[/] test trajectories to {output}"
     )
 
 
@@ -108,6 +119,7 @@ def command_split(args: argparse.Namespace) -> None:
 
 
 def command_train(args: argparse.Namespace) -> None:
+    TrainConfig, train_policy = _training_api()
     rollouts = read_jsonl(args.data)
     config = TrainConfig(
         max_samples=args.max_samples,
@@ -122,7 +134,7 @@ def command_train(args: argparse.Namespace) -> None:
     policy.save(args.output, training)
     console.print(
         f"Trained on [bold]{len(rollouts)}[/] trajectories / "
-        f"[bold]{training['states']}[/] state-cost pairs; final Bellman loss "
+        f"[bold]{training['state_cost_pairs']}[/] state-cost pairs; final exact-target loss "
         f"[bold]{training['final_loss']:.5f}[/]"
     )
     console.print(f"Saved policy to [cyan]{args.output}[/]")
@@ -171,10 +183,11 @@ def command_demo(args: argparse.Namespace) -> None:
 
 
 def command_quickstart(args: argparse.Namespace) -> None:
+    TrainConfig, train_policy = _training_api()
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
     train_path, test_path = output / "train.jsonl", output / "test.jsonl"
-    policy_path, benchmark_path = output / "policy.pt", output / "benchmark.json"
+    policy_path, benchmark_path = output / "policy.safetensors", output / "benchmark.json"
     train = make_synthetic_rollouts(args.train_size, args.max_samples, args.seed)
     test = make_synthetic_rollouts(args.test_size, args.max_samples, args.seed + 1)
     write_jsonl(train_path, train)
@@ -221,7 +234,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     train = subparsers.add_parser("train", help="fit the offline Q-controller")
     train.add_argument("--data", required=True)
-    train.add_argument("--output", default="artifacts/policy.pt")
+    train.add_argument("--output", default="artifacts/policy.safetensors")
     train.add_argument("--max-samples", type=int, default=8)
     train.add_argument("--hidden-size", type=int, default=64)
     train.add_argument("--epochs", type=int, default=80)

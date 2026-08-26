@@ -1,32 +1,48 @@
 from __future__ import annotations
 
+import json
 import math
-import random
-from dataclasses import asdict, dataclass
+import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import torch
-from torch import nn
-from torch.nn import functional as F
-from torch.utils.data import DataLoader, TensorDataset
+from safetensors import SafetensorError, safe_open
+from safetensors.numpy import save as save_safetensors
 
-from branchpilot.features import FEATURE_NAMES, prefix_correct, prefix_state
-from branchpilot.schema import Rollout
+from branchpilot.artifacts import atomic_write_bytes
+from branchpilot.features import FEATURE_NAMES, observed_state
+from branchpilot.schema import Rollout, Sample
 
-ARTIFACT_VERSION = 2
-
-
-@dataclass(frozen=True, slots=True)
-class TrainConfig:
-    max_samples: int = 8
-    hidden_size: int = 64
-    epochs: int = 80
-    batch_size: int = 256
-    learning_rate: float = 3e-4
-    seed: int = 7
-    costs: tuple[float, ...] = (0.0, 0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.25)
+ARTIFACT_VERSION = 3
+ARCHITECTURE = "mlp-layernorm-silu-v1"
+MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
+MAX_HIDDEN_SIZE = 4096
+MAX_SAMPLES = 1024
+_LAYER_NORM_EPSILON = np.float32(1e-5)
+_NETWORK_TENSORS = (
+    "input.weight",
+    "input.bias",
+    "norm.weight",
+    "norm.bias",
+    "hidden.weight",
+    "hidden.bias",
+    "output.weight",
+    "output.bias",
+)
+_METADATA_KEYS = {
+    "format",
+    "artifact_version",
+    "architecture",
+    "feature_names",
+    "hidden_size",
+    "max_samples",
+    "costs",
+    "training",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,66 +53,161 @@ class Decision:
     sample_count: int
     majority_answer: str | None
 
+    @property
+    def margin(self) -> float:
+        """Positive values favor STOP; negative values favor CONTINUE."""
+        return self.q_stop - self.q_continue
 
-class _QNetwork(nn.Module):
-    def __init__(self, input_size: int, hidden_size: int) -> None:
-        super().__init__()
-        self.layers = nn.Sequential(
-            nn.Linear(input_size, hidden_size),
-            nn.LayerNorm(hidden_size),
-            nn.SiLU(),
-            nn.Linear(hidden_size, hidden_size),
-            nn.SiLU(),
-            nn.Linear(hidden_size, 2),
-        )
 
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        return self.layers(inputs)
+def _expected_shapes(hidden_size: int) -> dict[str, tuple[int, ...]]:
+    input_size = len(FEATURE_NAMES) + 3
+    return {
+        "input.weight": (hidden_size, input_size),
+        "input.bias": (hidden_size,),
+        "norm.weight": (hidden_size,),
+        "norm.bias": (hidden_size,),
+        "hidden.weight": (hidden_size, hidden_size),
+        "hidden.bias": (hidden_size,),
+        "output.weight": (2, hidden_size),
+        "output.bias": (2,),
+    }
+
+
+def _positive_metadata_int(metadata: Mapping[str, str], key: str, maximum: int) -> int:
+    raw = metadata.get(key)
+    if raw is None or re.fullmatch(r"[1-9]\d*", raw) is None:
+        raise ValueError(f"policy metadata {key!r} must be a positive integer")
+    value = int(raw)
+    if value > maximum:
+        raise ValueError(f"policy metadata {key!r} exceeds the supported maximum {maximum}")
+    return value
+
+
+def _validated_costs(values: Sequence[float]) -> tuple[float, ...]:
+    costs = tuple(float(value) for value in values)
+    if not costs or any(not math.isfinite(cost) or cost < 0 for cost in costs):
+        raise ValueError("policy costs must be a non-empty finite non-negative sequence")
+    if any(left >= right for left, right in pairwise(costs)):
+        raise ValueError("policy costs must be strictly increasing")
+    return costs
+
+
+def _silu(values: np.ndarray) -> np.ndarray:
+    clipped = np.clip(values, np.float32(-80.0), np.float32(80.0))
+    return values / (np.float32(1.0) + np.exp(-clipped))
+
+
+def _project_nonincreasing(values: np.ndarray) -> np.ndarray:
+    """Least-squares isotonic projection with one unit-weight observation per cost."""
+    levels: list[float] = []
+    weights: list[int] = []
+    for value in -np.asarray(values, dtype=np.float64):
+        levels.append(float(value))
+        weights.append(1)
+        while len(levels) >= 2 and levels[-2] > levels[-1]:
+            combined_weight = weights[-2] + weights[-1]
+            combined_level = (levels[-2] * weights[-2] + levels[-1] * weights[-1]) / combined_weight
+            levels[-2:] = [combined_level]
+            weights[-2:] = [combined_weight]
+    projected = np.concatenate(
+        [
+            np.full(weight, level, dtype=np.float64)
+            for level, weight in zip(levels, weights, strict=True)
+        ]
+    )
+    return -projected
 
 
 class BranchPilotPolicy:
-    """A universal value function approximator conditioned on inference cost."""
+    """Torch-free inference for a cost-conditioned BranchPilot Q-policy."""
 
     def __init__(
         self,
-        network: _QNetwork,
+        weights: Mapping[str, np.ndarray],
         feature_mean: np.ndarray,
         feature_std: np.ndarray,
         max_samples: int,
         hidden_size: int,
+        costs: Sequence[float],
+        training: Mapping[str, Any] | None = None,
     ) -> None:
-        feature_mean = np.asarray(feature_mean, dtype=np.float32)
-        feature_std = np.asarray(feature_std, dtype=np.float32)
-        expected_shape = (len(FEATURE_NAMES),)
-        if max_samples < 1 or hidden_size < 1:
-            raise ValueError("policy dimensions must be positive")
-        if feature_mean.shape != expected_shape or feature_std.shape != expected_shape:
-            raise ValueError(f"normalization tensors must have shape {expected_shape}")
+        if max_samples < 1 or max_samples > MAX_SAMPLES:
+            raise ValueError(f"max_samples must be in [1, {MAX_SAMPLES}]")
+        if hidden_size < 1 or hidden_size > MAX_HIDDEN_SIZE:
+            raise ValueError(f"hidden_size must be in [1, {MAX_HIDDEN_SIZE}]")
+
+        feature_mean = np.asarray(feature_mean)
+        feature_std = np.asarray(feature_std)
+        expected_feature_shape = (len(FEATURE_NAMES),)
+        if (
+            feature_mean.shape != expected_feature_shape
+            or feature_std.shape != expected_feature_shape
+        ):
+            raise ValueError(f"normalization tensors must have shape {expected_feature_shape}")
+        if feature_mean.dtype != np.float32 or feature_std.dtype != np.float32:
+            raise ValueError("normalization tensors must use float32")
         if not np.isfinite(feature_mean).all():
             raise ValueError("feature means must be finite")
         if not np.isfinite(feature_std).all() or np.any(feature_std <= 0):
             raise ValueError("feature standard deviations must be finite and positive")
-        self.network = network.eval()
-        self.feature_mean = feature_mean
-        self.feature_std = feature_std
+
+        expected_shapes = _expected_shapes(hidden_size)
+        if set(weights) != set(_NETWORK_TENSORS):
+            missing = sorted(set(_NETWORK_TENSORS) - set(weights))
+            extra = sorted(set(weights) - set(_NETWORK_TENSORS))
+            raise ValueError(
+                f"policy tensors do not match the architecture; missing={missing}, extra={extra}"
+            )
+        checked: dict[str, np.ndarray] = {}
+        for name in _NETWORK_TENSORS:
+            value = np.asarray(weights[name])
+            if value.shape != expected_shapes[name]:
+                raise ValueError(
+                    f"policy tensor {name!r} has shape {value.shape}, "
+                    f"expected {expected_shapes[name]}"
+                )
+            if value.dtype != np.float32:
+                raise ValueError(f"policy tensor {name!r} must use float32")
+            if not np.isfinite(value).all():
+                raise ValueError(f"policy tensor {name!r} must be finite")
+            checked[name] = np.ascontiguousarray(value).copy()
+
+        self._weights = checked
+        self.feature_mean = np.ascontiguousarray(feature_mean).copy()
+        self.feature_std = np.ascontiguousarray(feature_std).copy()
         self.max_samples = max_samples
         self.hidden_size = hidden_size
+        self.costs = _validated_costs(costs)
+        self._training = json.loads(json.dumps(dict(training or {}), sort_keys=True))
 
-    def _input(
+    @property
+    def training(self) -> dict[str, Any]:
+        """Return a defensive copy of the artifact's training provenance."""
+        return json.loads(json.dumps(self._training, sort_keys=True))
+
+    def _model_input(
         self,
         features: np.ndarray,
         cost: float,
         remaining_samples: float,
-    ) -> torch.Tensor:
+    ) -> np.ndarray:
         features = np.asarray(features, dtype=np.float32)
         if features.shape != (len(FEATURE_NAMES),) or not np.isfinite(features).all():
             raise ValueError("features must be a finite BranchPilot state vector")
         if not math.isfinite(cost) or cost < 0:
             raise ValueError("cost must be finite and non-negative")
-        if not math.isfinite(remaining_samples) or remaining_samples < 0:
-            raise ValueError("remaining_samples must be finite and non-negative")
+        if cost < self.costs[0] or cost > self.costs[-1]:
+            raise ValueError(
+                f"cost must be within the trained range [{self.costs[0]:g}, {self.costs[-1]:g}]"
+            )
+        if (
+            not math.isfinite(remaining_samples)
+            or remaining_samples < 0
+            or remaining_samples > self.max_samples
+        ):
+            raise ValueError(f"remaining_samples must be finite and within [0, {self.max_samples}]")
         standardized = (features - self.feature_mean) / self.feature_std
-        model_input = np.concatenate(
+        return np.concatenate(
             [
                 standardized,
                 np.asarray(
@@ -108,30 +219,78 @@ class BranchPilotPolicy:
                     dtype=np.float32,
                 ),
             ]
-        )
-        return torch.from_numpy(model_input).unsqueeze(0)
+        ).astype(np.float32, copy=False)
 
-    @torch.inference_mode()
+    def _forward(self, model_input: np.ndarray) -> np.ndarray:
+        weights = self._weights
+        hidden = weights["input.weight"] @ model_input + weights["input.bias"]
+        centered = hidden - np.mean(hidden, dtype=np.float32)
+        variance = np.mean(centered * centered, dtype=np.float32)
+        hidden = centered / np.sqrt(variance + _LAYER_NORM_EPSILON)
+        hidden = hidden * weights["norm.weight"] + weights["norm.bias"]
+        hidden = _silu(hidden)
+        hidden = weights["hidden.weight"] @ hidden + weights["hidden.bias"]
+        hidden = _silu(hidden)
+        return weights["output.weight"] @ hidden + weights["output.bias"]
+
     def q_values(
         self,
         features: np.ndarray,
         cost: float,
         remaining_samples: float | None = None,
     ) -> tuple[float, float]:
+        if not math.isfinite(cost) or cost < self.costs[0] or cost > self.costs[-1]:
+            raise ValueError(
+                f"cost must be finite and within the trained range "
+                f"[{self.costs[0]:g}, {self.costs[-1]:g}]"
+            )
         if remaining_samples is None:
             progress = float(features[0])
             remaining_samples = max(0.0, (1.0 - progress) * self.max_samples)
-        values = self.network(self._input(features, cost, remaining_samples)).squeeze(0)
-        return float(values[0]), float(values[1])
+        raw = np.asarray(
+            [
+                self._forward(self._model_input(features, trained_cost, remaining_samples))
+                for trained_cost in self.costs
+            ],
+            dtype=np.float64,
+        )
+        grid = np.asarray(self.costs, dtype=np.float64)
+        q_stop = float(np.interp(cost, grid, raw[:, 0]))
+        advantage = _project_nonincreasing(raw[:, 1] - raw[:, 0])
+        q_continue = q_stop + float(np.interp(cost, grid, advantage))
+        return q_stop, q_continue
+
+    def decide_observed(
+        self,
+        question: str,
+        samples: Sequence[Sample],
+        cost: float,
+        *,
+        prompt_tokens: int = 0,
+        max_samples: int | None = None,
+    ) -> Decision:
+        """Decide from an unlabeled prefix without reading future samples."""
+        observed = tuple(samples)
+        horizon = self.max_samples if max_samples is None else max_samples
+        if horizon < 1 or horizon > self.max_samples:
+            raise ValueError(f"max_samples must be in [1, {self.max_samples}]")
+        state = observed_state(question, observed, horizon, prompt_tokens)
+        count = len(observed)
+        q_stop, q_continue = self.q_values(state.features, cost, horizon - count)
+        action = "stop" if count >= horizon or q_stop >= q_continue else "continue"
+        return Decision(action, q_stop, q_continue, count, state.majority_answer)
 
     def decide(self, rollout: Rollout, count: int, cost: float) -> Decision:
         horizon = min(self.max_samples, len(rollout.samples))
         if count < 1 or count > horizon:
             raise ValueError(f"count must be in [1, {horizon}], got {count}")
-        state = prefix_state(rollout, count, self.max_samples)
-        q_stop, q_continue = self.q_values(state.features, cost, horizon - count)
-        action = "stop" if count >= horizon or q_stop >= q_continue else "continue"
-        return Decision(action, q_stop, q_continue, count, state.majority_answer)
+        return self.decide_observed(
+            rollout.question,
+            rollout.samples[:count],
+            cost,
+            prompt_tokens=rollout.prompt_tokens,
+            max_samples=horizon,
+        )
 
     def run(self, rollout: Rollout, cost: float) -> Decision:
         horizon = min(self.max_samples, len(rollout.samples))
@@ -141,202 +300,107 @@ class BranchPilotPolicy:
                 return decision
         raise RuntimeError("policy failed to stop at its horizon")
 
-    def save(self, path: str | Path, training: dict[str, Any] | None = None) -> None:
-        destination = Path(path)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(
-            {
-                "artifact_version": ARTIFACT_VERSION,
-                "feature_names": FEATURE_NAMES,
-                "feature_mean": torch.from_numpy(self.feature_mean),
-                "feature_std": torch.from_numpy(self.feature_std),
-                "hidden_size": self.hidden_size,
-                "max_samples": self.max_samples,
-                "state_dict": self.network.state_dict(),
-                "training": training or {},
-            },
-            destination,
+    def start(
+        self,
+        question: str,
+        cost: float,
+        *,
+        prompt_tokens: int = 0,
+        max_samples: int | None = None,
+    ):
+        """Create a label-free incremental inference session."""
+        from branchpilot.runtime import PilotSession
+
+        return PilotSession(
+            self,
+            question,
+            cost,
+            prompt_tokens=prompt_tokens,
+            max_samples=max_samples,
         )
+
+    def save(self, path: str | Path, training: Mapping[str, Any] | None = None) -> None:
+        training_payload = dict(self._training if training is None else training)
+        metadata = {
+            "format": "branchpilot-policy",
+            "artifact_version": str(ARTIFACT_VERSION),
+            "architecture": ARCHITECTURE,
+            "feature_names": json.dumps(FEATURE_NAMES, separators=(",", ":")),
+            "hidden_size": str(self.hidden_size),
+            "max_samples": str(self.max_samples),
+            "costs": json.dumps(self.costs, separators=(",", ":")),
+            "training": json.dumps(training_payload, separators=(",", ":"), sort_keys=True),
+        }
+        tensors = {
+            **self._weights,
+            "feature_mean": self.feature_mean,
+            "feature_std": self.feature_std,
+        }
+        encoded = save_safetensors(tensors, metadata=metadata)
+        if len(encoded) > MAX_ARTIFACT_BYTES:
+            raise ValueError(f"policy artifact exceeds {MAX_ARTIFACT_BYTES} bytes")
+        atomic_write_bytes(path, encoded)
 
     @classmethod
     def load(cls, path: str | Path) -> BranchPilotPolicy:
+        source = Path(path)
+        size = source.stat().st_size
+        if size < 1 or size > MAX_ARTIFACT_BYTES:
+            raise ValueError(f"policy artifact size must be in [1, {MAX_ARTIFACT_BYTES}] bytes")
         try:
-            payload = torch.load(path, map_location="cpu", weights_only=True)
-            if int(payload["artifact_version"]) != ARTIFACT_VERSION:
-                raise ValueError(f"unsupported policy artifact {payload['artifact_version']}")
-            if tuple(payload["feature_names"]) != FEATURE_NAMES:
-                raise ValueError("policy features do not match this BranchPilot version")
-            hidden_size = int(payload["hidden_size"])
-            max_samples = int(payload["max_samples"])
-            feature_mean = payload["feature_mean"].detach().cpu().numpy()
-            feature_std = payload["feature_std"].detach().cpu().numpy()
-            network = _QNetwork(len(FEATURE_NAMES) + 3, hidden_size)
-            network.load_state_dict(payload["state_dict"])
+            with safe_open(source, framework="np") as artifact:
+                metadata = artifact.metadata() or {}
+                if set(metadata) != _METADATA_KEYS:
+                    missing = sorted(_METADATA_KEYS - set(metadata))
+                    extra = sorted(set(metadata) - _METADATA_KEYS)
+                    raise ValueError(
+                        f"policy metadata does not match schema; missing={missing}, extra={extra}"
+                    )
+                if metadata["format"] != "branchpilot-policy":
+                    raise ValueError("file is not a BranchPilot policy artifact")
+                if metadata["artifact_version"] != str(ARTIFACT_VERSION):
+                    raise ValueError(
+                        f"unsupported policy artifact {metadata['artifact_version']}; "
+                        f"expected {ARTIFACT_VERSION}"
+                    )
+                if metadata["architecture"] != ARCHITECTURE:
+                    raise ValueError("unsupported policy architecture")
+                feature_names = tuple(json.loads(metadata["feature_names"]))
+                if feature_names != FEATURE_NAMES:
+                    raise ValueError("policy features do not match this BranchPilot version")
+                hidden_size = _positive_metadata_int(metadata, "hidden_size", MAX_HIDDEN_SIZE)
+                max_samples = _positive_metadata_int(metadata, "max_samples", MAX_SAMPLES)
+                costs = _validated_costs(json.loads(metadata["costs"]))
+                training = json.loads(metadata["training"])
+                if not isinstance(training, dict):
+                    raise ValueError("policy training metadata must be a JSON object")
+
+                expected_shapes = {
+                    **_expected_shapes(hidden_size),
+                    "feature_mean": (len(FEATURE_NAMES),),
+                    "feature_std": (len(FEATURE_NAMES),),
+                }
+                if set(artifact.keys()) != set(expected_shapes):
+                    missing = sorted(set(expected_shapes) - set(artifact.keys()))
+                    extra = sorted(set(artifact.keys()) - set(expected_shapes))
+                    raise ValueError(
+                        f"policy tensors do not match schema; missing={missing}, extra={extra}"
+                    )
+                for name, expected_shape in expected_shapes.items():
+                    shape = tuple(artifact.get_slice(name).get_shape())
+                    if shape != expected_shape:
+                        raise ValueError(
+                            f"policy tensor {name!r} has shape {shape}, expected {expected_shape}"
+                        )
+                tensors = {name: artifact.get_tensor(name) for name in expected_shapes}
             return cls(
-                network,
-                feature_mean,
-                feature_std,
+                {name: tensors[name] for name in _NETWORK_TENSORS},
+                tensors["feature_mean"],
+                tensors["feature_std"],
                 max_samples,
                 hidden_size,
+                costs,
+                training,
             )
-        except (KeyError, RuntimeError, TypeError) as exc:
+        except (SafetensorError, KeyError, TypeError, json.JSONDecodeError) as exc:
             raise ValueError(f"invalid policy artifact: {exc}") from exc
-
-
-def _seed_everything(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.use_deterministic_algorithms(True)
-
-
-def _prepare_training_tensors(
-    rollouts: list[Rollout], config: TrainConfig
-) -> tuple[TensorDataset, np.ndarray, np.ndarray]:
-    states: list[np.ndarray] = []
-    next_states: list[np.ndarray] = []
-    stop_rewards: list[float] = []
-    can_continue: list[bool] = []
-    next_can_continue: list[bool] = []
-    remaining: list[float] = []
-
-    for rollout in rollouts:
-        horizon = min(config.max_samples, len(rollout.samples))
-        for count in range(1, horizon + 1):
-            states.append(prefix_state(rollout, count, config.max_samples).features)
-            next_count = min(count + 1, horizon)
-            next_states.append(prefix_state(rollout, next_count, config.max_samples).features)
-            stop_rewards.append(float(prefix_correct(rollout, count)))
-            can_continue.append(count < horizon)
-            next_can_continue.append(next_count < horizon)
-            remaining.append(float(horizon - count))
-
-    state_matrix = np.stack(states).astype(np.float32)
-    next_matrix = np.stack(next_states).astype(np.float32)
-    feature_mean = state_matrix.mean(axis=0)
-    feature_std = state_matrix.std(axis=0)
-    feature_std[feature_std < 1e-5] = 1.0
-    state_matrix = (state_matrix - feature_mean) / feature_std
-    next_matrix = (next_matrix - feature_mean) / feature_std
-
-    tiled_states: list[np.ndarray] = []
-    tiled_next_states: list[np.ndarray] = []
-    tiled_stop: list[float] = []
-    tiled_continue: list[bool] = []
-    tiled_next_continue: list[bool] = []
-    tiled_cost: list[float] = []
-    tiled_remaining: list[float] = []
-    for cost in config.costs:
-        tiled_states.append(state_matrix)
-        tiled_next_states.append(next_matrix)
-        tiled_stop.extend(stop_rewards)
-        tiled_continue.extend(can_continue)
-        tiled_next_continue.extend(next_can_continue)
-        tiled_cost.extend([cost] * len(states))
-        tiled_remaining.extend(remaining)
-
-    current = np.concatenate(tiled_states, axis=0)
-    following = np.concatenate(tiled_next_states, axis=0)
-    costs = np.asarray(tiled_cost, dtype=np.float32)
-    remaining_array = np.asarray(tiled_remaining, dtype=np.float32)
-    current_input = np.concatenate(
-        [
-            current,
-            costs[:, None],
-            (remaining_array / config.max_samples)[:, None],
-            (costs * remaining_array)[:, None],
-        ],
-        axis=1,
-    )
-    next_remaining = np.maximum(remaining_array - 1.0, 0.0)
-    next_input = np.concatenate(
-        [
-            following,
-            costs[:, None],
-            (next_remaining / config.max_samples)[:, None],
-            (costs * next_remaining)[:, None],
-        ],
-        axis=1,
-    )
-    dataset = TensorDataset(
-        torch.from_numpy(current_input),
-        torch.from_numpy(next_input),
-        torch.tensor(tiled_stop, dtype=torch.float32),
-        torch.tensor(tiled_continue, dtype=torch.bool),
-        torch.tensor(tiled_next_continue, dtype=torch.bool),
-        torch.from_numpy(costs),
-    )
-    return dataset, feature_mean, feature_std
-
-
-def train_policy(
-    rollouts: list[Rollout], config: TrainConfig | None = None
-) -> tuple[BranchPilotPolicy, dict[str, Any]]:
-    config = config or TrainConfig()
-    if not rollouts:
-        raise ValueError("training requires at least one rollout")
-    if config.max_samples < 1 or config.hidden_size < 1:
-        raise ValueError("max_samples and hidden_size must be positive")
-    if config.epochs < 1 or config.batch_size < 1:
-        raise ValueError("epochs and batch_size must be positive")
-    if not math.isfinite(config.learning_rate) or config.learning_rate <= 0:
-        raise ValueError("learning_rate must be finite and positive")
-    if not config.costs or any(not math.isfinite(cost) or cost < 0 for cost in config.costs):
-        raise ValueError("training costs must be a non-empty finite non-negative sequence")
-    _seed_everything(config.seed)
-    dataset, feature_mean, feature_std = _prepare_training_tensors(rollouts, config)
-    generator = torch.Generator().manual_seed(config.seed)
-    loader = DataLoader(
-        dataset,
-        batch_size=config.batch_size,
-        shuffle=True,
-        generator=generator,
-        num_workers=0,
-    )
-
-    network = _QNetwork(len(FEATURE_NAMES) + 3, config.hidden_size)
-    target = _QNetwork(len(FEATURE_NAMES) + 3, config.hidden_size)
-    target.load_state_dict(network.state_dict())
-    target.eval()
-    optimizer = torch.optim.AdamW(network.parameters(), lr=config.learning_rate, weight_decay=1e-4)
-    epoch_loss = 0.0
-
-    for epoch in range(config.epochs):
-        network.train()
-        total_loss = 0.0
-        batches = 0
-        for current, following, stop_reward, can_continue, next_can_continue, cost in loader:
-            with torch.no_grad():
-                target_next = target(following)
-                online_action = network(following).argmax(dim=1)
-                next_value = target_next.gather(1, online_action[:, None]).squeeze(1)
-                next_value = torch.where(next_can_continue, next_value, target_next[:, 0])
-                continue_target = -cost + next_value
-
-            predicted = network(current)
-            stop_loss = F.smooth_l1_loss(predicted[:, 0], stop_reward)
-            continue_loss = F.smooth_l1_loss(
-                predicted[can_continue, 1], continue_target[can_continue]
-            )
-            loss = stop_loss + continue_loss
-            optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            nn.utils.clip_grad_norm_(network.parameters(), 1.0)
-            optimizer.step()
-            total_loss += float(loss.detach())
-            batches += 1
-
-        epoch_loss = total_loss / max(1, batches)
-        if (epoch + 1) % 4 == 0:
-            target.load_state_dict(network.state_dict())
-
-    policy = BranchPilotPolicy(
-        network.eval(), feature_mean, feature_std, config.max_samples, config.hidden_size
-    )
-    training = {
-        "config": asdict(config),
-        "rollouts": len(rollouts),
-        "states": len(dataset),
-        "final_loss": epoch_loss,
-    }
-    return policy, training
