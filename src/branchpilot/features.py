@@ -37,8 +37,11 @@ class PrefixState:
     runner_up_votes: int
 
 
-def _answer_key(answer: str | None, index: int) -> str:
-    return answer if answer is not None else f"<unparsed:{index}>"
+AnswerKey = tuple[bool, str | int]
+
+
+def _answer_key(answer: str | None, index: int) -> AnswerKey:
+    return (True, answer) if answer is not None else (False, index)
 
 
 def observed_state(
@@ -56,11 +59,11 @@ def observed_state(
     if prompt_tokens < 0:
         raise ValueError("prompt_tokens cannot be negative")
 
-    votes: dict[str, list[int]] = defaultdict(list)
+    votes: dict[AnswerKey, list[int]] = defaultdict(list)
     for index, sample in enumerate(samples):
         votes[_answer_key(sample.answer, index)].append(index)
 
-    def vote_rank(item: tuple[str, list[int]]) -> tuple[int, float, int]:
+    def vote_rank(item: tuple[AnswerKey, list[int]]) -> tuple[int, float, int]:
         _, indices = item
         logprobs = [samples[index].mean_logprob for index in indices]
         finite = [value for value in logprobs if value is not None and math.isfinite(value)]
@@ -71,7 +74,7 @@ def observed_state(
     winner, winner_indices = ranked[0]
     top_votes = len(winner_indices)
     runner_up_votes = len(ranked[1][1]) if len(ranked) > 1 else 0
-    majority = None if winner.startswith("<unparsed:") else winner
+    majority = str(winner[1]) if winner[0] else None
 
     probabilities = np.asarray([len(indices) / count for _, indices in ranked], dtype=np.float32)
     entropy = -float(np.sum(probabilities * np.log(probabilities + 1e-12)))

@@ -59,6 +59,21 @@ def test_unparsed_samples_never_form_false_consensus() -> None:
     assert state.features[FEATURE_NAMES.index("logprob_coverage")] == 0.0
 
 
+def test_parsed_answer_cannot_collide_with_internal_unparsed_votes() -> None:
+    parsed = "<unparsed:0>"
+    state = observed_state(
+        "question",
+        (
+            Sample("minority", "minority", 1),
+            Sample(parsed, parsed, 1),
+            Sample(parsed, parsed, 1),
+        ),
+        3,
+    )
+    assert state.majority_answer == parsed
+    assert state.top_votes == 2
+
+
 def test_live_and_offline_state_construction_are_identical() -> None:
     rollout = _rollout()
     offline = prefix_state(rollout, 2, 3)
