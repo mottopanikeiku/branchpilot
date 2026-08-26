@@ -1,0 +1,46 @@
+{
+  "baselines": {
+    "0.01": "agreement-2",
+    "0.025": "agreement-2",
+    "0.05": "agreement-2",
+    "0.075": "fixed-1",
+    "0.1": "fixed-1",
+    "0.15": "fixed-1"
+  },
+  "costs": [
+    0.01,
+    0.025,
+    0.05,
+    0.075,
+    0.1,
+    0.15
+  ],
+  "policy": {
+    "bytes": 80104,
+    "path": "policy.safetensors",
+    "sha256": "cb4e9ff90ced481bea94565d3a28ea8f46d22204074cae096044610c104501a1"
+  },
+  "protocol": {
+    "evidence_tier": "scoped-single-model-single-task",
+    "path": "protocol.json",
+    "sha256": "ddefc64adc05dd25f4a8ab7186574ae54030c6a5002a22500ed4ac4680df7748",
+    "status": "frozen-before-canonical-generation"
+  },
+  "schema_version": 1,
+  "selection": "observed-best-on-validation",
+  "validation_benchmark": {
+    "bytes": 1967363,
+    "path": "gsm8k-v2-validation.json",
+    "sha256": "ddf8fc380490cf1534f5b5f9c0f0a7e131e389489d32f8328203861bf928b4af"
+  },
+  "validation_data": {
+    "bytes": 3200046,
+    "path": "../artifacts/gsm8k-v2/validation.jsonl",
+    "sha256": "f09a5a02f7e1edfc01ab0f018c8dac494533e54d57a4998c394c06fed3929032"
+  },
+  "validation_manifest": {
+    "bytes": 71141,
+    "path": "manifest-v2.json",
+    "sha256": "c58604368725ac39149f949b4ae455a857f0be2a8202d50cbcfb0fdea28f8b28"
+  }
+}
