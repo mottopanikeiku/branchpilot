@@ -184,9 +184,16 @@ def _load_frozen_baselines(
     path: str | Path,
     *,
     costs: tuple[float, ...],
-    policy_snapshot: dict[str, str | int],
+    policy_capture: FileSnapshot,
     protocol: Protocol,
-) -> tuple[dict[float, str], FileSnapshot, FileSnapshot, dict]:
+) -> tuple[
+    dict[float, str],
+    FileSnapshot,
+    FileSnapshot,
+    FileSnapshot,
+    FileSnapshot,
+    dict,
+]:
     selection_path = Path(path)
     selection_capture = _capture_file(selection_path, "baseline selection")
     payload = json.loads(selection_capture.payload.decode("utf-8"))
@@ -196,20 +203,37 @@ def _load_frozen_baselines(
         raise ValueError("baseline selection has an unsupported selection method")
     if payload.get("protocol") != protocol.metadata():
         raise ValueError("baseline selection is not bound to this frozen protocol")
+    policy_snapshot = policy_capture.metadata()
     if payload.get("policy") != policy_snapshot:
         raise ValueError("baseline selection is not bound to this policy artifact")
     if payload.get("costs") != list(costs):
         raise ValueError("baseline selection costs do not match evaluation costs")
-    source = payload.get("validation_benchmark")
-    if not isinstance(source, dict):
-        raise ValueError("baseline selection is missing validation_benchmark")
-    relative_source = source.get("path")
-    if not isinstance(relative_source, str) or not relative_source:
-        raise ValueError("baseline selection validation benchmark path is invalid")
-    source_path = selection_path.parent / relative_source
-    source_capture = _capture_file(source_path, "validation benchmark")
-    if any(source.get(key) != source_capture.metadata()[key] for key in ("bytes", "sha256")):
-        raise ValueError("baseline selection validation benchmark binding is invalid")
+
+    def capture_binding(field: str, label: str) -> tuple[dict, FileSnapshot]:
+        binding = payload.get(field)
+        if not isinstance(binding, dict):
+            raise ValueError(f"baseline selection is missing {field}")
+        relative_path = binding.get("path")
+        if not isinstance(relative_path, str) or not relative_path:
+            raise ValueError(f"baseline selection {field} path is invalid")
+        captured = _capture_file(selection_path.parent / relative_path, label)
+        if any(binding.get(key) != captured.metadata()[key] for key in ("bytes", "sha256")):
+            raise ValueError(f"baseline selection {field} binding is invalid")
+        return binding, captured
+
+    source, source_capture = capture_binding("validation_benchmark", "validation benchmark")
+    validation_data, validation_data_capture = capture_binding("validation_data", "validation data")
+    validation_manifest, validation_manifest_capture = capture_binding(
+        "validation_manifest", "validation manifest"
+    )
+    manifest = verify_manifest_artifact(
+        validation_manifest_capture.path,
+        validation_data_capture.path,
+        "validation",
+        protocol,
+        manifest_snapshot=validation_manifest_capture,
+        data_snapshot=validation_data_capture,
+    )
     validation_payload = json.loads(source_capture.payload.decode("utf-8"))
     if not isinstance(validation_payload, dict):
         raise ValueError("validation benchmark must be a JSON object")
@@ -220,50 +244,65 @@ def _load_frozen_baselines(
         validation_policy.get(key) != value for key, value in policy_snapshot.items()
     ):
         raise ValueError("validation benchmark policy binding is invalid")
-    validation_data = payload.get("validation_data")
-    if not isinstance(validation_data, dict) or any(
-        validation_payload.get("data", {}).get(key) != value
-        for key, value in validation_data.items()
+    validation_payload_data = validation_payload.get("data")
+    if not isinstance(validation_payload_data, dict) or any(
+        validation_payload_data.get(key) != validation_data_capture.metadata()[key]
+        for key in ("bytes", "sha256")
     ):
-        raise ValueError("baseline selection validation data binding is invalid")
-    if payload.get("validation_manifest") != validation_payload.get("data", {}).get("manifest"):
-        raise ValueError("baseline selection generation manifest binding is invalid")
+        raise ValueError("validation benchmark data binding is invalid")
+    if validation_payload_data.get("path") != validation_data_capture.path.name:
+        raise ValueError("validation benchmark data path is invalid")
+    if validation_payload_data.get("manifest") != validation_manifest_capture.metadata():
+        raise ValueError("validation benchmark generation manifest binding is invalid")
+
+    validation_rollouts = read_jsonl_bytes(
+        validation_data_capture.payload,
+        str(validation_data_capture.path),
+    )
+    validate_unique(validation_rollouts)
+    protocol.require("collection.validation_records", len(validation_rollouts))
+    validation_policy_object = _load_policy_snapshot(policy_capture)
+    _validate_policy_protocol(
+        validation_policy_object,
+        protocol,
+        validation_manifest_capture.metadata(),
+        manifest,
+    )
+    evaluation = protocol.payload["evaluation"]
+    recomputed = benchmark(
+        validation_rollouts,
+        validation_policy_object,
+        costs,
+        bootstrap_samples=evaluation["bootstrap_resamples"],
+        bootstrap_seed=evaluation["bootstrap_seed"],
+    ).to_dict()
+    for field, value in recomputed.items():
+        if validation_payload.get(field) != value:
+            raise ValueError(
+                f"validation benchmark field {field!r} does not match replayed evidence"
+            )
+    render_svg(validation_payload)
+
     raw_baselines = payload.get("baselines")
     if not isinstance(raw_baselines, dict) or not raw_baselines:
         raise ValueError("baseline selection must contain a non-empty baselines object")
-    try:
-        baselines = {float(cost): str(policy) for cost, policy in raw_baselines.items()}
-    except (TypeError, ValueError) as exc:
-        raise ValueError("baseline selection keys must be numeric costs") from exc
+    expected_baselines = {
+        _cost_key(comparison["scoring_cost"]): comparison["baseline_policy"]
+        for comparison in recomputed["comparisons"]
+    }
+    if raw_baselines != expected_baselines:
+        raise ValueError("baseline names do not match replayed validation selection")
+    baselines = {float(cost): str(policy) for cost, policy in raw_baselines.items()}
     if set(baselines) != set(costs) or any(not policy for policy in baselines.values()):
         raise ValueError("baseline selection must name one policy for every evaluation cost")
-    render_svg(validation_payload)
-    validation_rows = validation_payload["rows"]
-    expected_baselines: dict[str, str] = {}
-    for cost in costs:
-        candidates = [
-            row
-            for row in validation_rows
-            if row["family"] != "offline-rl" and row["scoring_cost"] == cost
-        ]
-        if not candidates:
-            raise ValueError(f"validation benchmark has no baselines at cost {cost:g}")
-        expected_baselines[_cost_key(cost)] = max(
-            candidates,
-            key=lambda row: row["utility"],
-        )["policy"]
-    if raw_baselines != expected_baselines:
-        raise ValueError("baseline names do not match recomputed observed-best validation utility")
-    comparisons = {
-        comparison["scoring_cost"]: comparison for comparison in validation_payload["comparisons"]
-    }
-    if any(
-        comparisons[cost]["selection"] != "observed-best (exploratory)"
-        or comparisons[cost]["baseline_policy"] != expected_baselines[_cost_key(cost)]
-        for cost in costs
-    ):
-        raise ValueError("validation comparison rows do not match recomputed selection")
-    return baselines, selection_capture, source_capture, payload
+    return (
+        baselines,
+        selection_capture,
+        source_capture,
+        validation_data_capture,
+        validation_manifest_capture,
+        payload,
+    )
 
 
 def _write_benchmark(
@@ -292,7 +331,9 @@ def _write_benchmark(
         selection_snapshot = None
         selection_payload = None
         selection_capture = None
-        validation_capture = None
+        validation_benchmark_capture = None
+        validation_data_capture = None
+        validation_manifest_capture = None
         validation_source = None
         manifest = None
     else:
@@ -322,7 +363,9 @@ def _write_benchmark(
             selection_snapshot = None
             selection_payload = None
             selection_capture = None
-            validation_capture = None
+            validation_benchmark_capture = None
+            validation_data_capture = None
+            validation_manifest_capture = None
             validation_source = None
         else:
             if split != "test":
@@ -330,18 +373,20 @@ def _write_benchmark(
             (
                 frozen_baselines,
                 selection_capture,
-                validation_capture,
+                validation_benchmark_capture,
+                validation_data_capture,
+                validation_manifest_capture,
                 selection_payload,
             ) = _load_frozen_baselines(
                 frozen_baseline_path,
                 costs=costs,
-                policy_snapshot=policy_snapshot,
+                policy_capture=policy_capture,
                 protocol=protocol,
             )
             selection_snapshot = selection_capture.metadata()
             if selection_payload["validation_data"]["sha256"] == data_snapshot["sha256"]:
                 raise ValueError("validation and test data must have different SHA-256 values")
-            validation_source = validation_capture.path
+            validation_source = validation_benchmark_capture.path
             if paths_alias(output, validation_source):
                 raise ValueError("test benchmark output cannot overwrite validation benchmark")
 
@@ -386,9 +431,19 @@ def _write_benchmark(
                 "baseline selection",
             )
             _verify_unchanged(
-                validation_source,
-                validation_capture.metadata(),
+                validation_benchmark_capture.path,
+                validation_benchmark_capture.metadata(),
                 "validation benchmark",
+            )
+            _verify_unchanged(
+                validation_data_capture.path,
+                validation_data_capture.metadata(),
+                "validation data",
+            )
+            _verify_unchanged(
+                validation_manifest_capture.path,
+                validation_manifest_capture.metadata(),
+                "validation manifest",
             )
 
     payload = {
@@ -674,10 +729,14 @@ def command_evaluate(args: argparse.Namespace) -> None:
         )
         if not isinstance(selection_preview, dict):
             raise ValueError("baseline selection must be a JSON object")
-        source = selection_preview.get("validation_benchmark", {})
-        validation_source = Path(args.frozen_baselines).parent / str(source.get("path", ""))
+        indirect_inputs = {}
+        for field in ("validation_benchmark", "validation_data", "validation_manifest"):
+            binding = selection_preview.get(field)
+            if not isinstance(binding, dict) or not isinstance(binding.get("path"), str):
+                raise ValueError(f"baseline selection {field} path is invalid")
+            indirect_inputs[field] = Path(args.frozen_baselines).parent / binding["path"]
         _assert_distinct_paths(
-            validation_benchmark=validation_source,
+            **indirect_inputs,
             output=args.output,
             svg=args.svg,
             html=args.html,
@@ -710,14 +769,22 @@ def command_evaluate(args: argparse.Namespace) -> None:
             args.output,
             Path(args.export_baselines).parent,
         )
+        selection_parent = Path(args.export_baselines).parent
+        validation_data_binding = {key: payload["data"][key] for key in ("path", "bytes", "sha256")}
+        validation_data_binding["path"] = os.path.relpath(args.data, selection_parent)
+        validation_manifest_binding = dict(payload["data"]["manifest"])
+        validation_manifest_binding["path"] = os.path.relpath(
+            args.manifest,
+            selection_parent,
+        )
         selection = {
             "schema_version": 1,
             "selection": "observed-best-on-validation",
             "protocol": payload["protocol"],
             "policy": {key: payload["policy"][key] for key in ("path", "bytes", "sha256")},
             "costs": list(args.costs),
-            "validation_data": {key: payload["data"][key] for key in ("path", "bytes", "sha256")},
-            "validation_manifest": payload["data"]["manifest"],
+            "validation_data": validation_data_binding,
+            "validation_manifest": validation_manifest_binding,
             "validation_benchmark": benchmark_binding,
             "baselines": selected,
         }

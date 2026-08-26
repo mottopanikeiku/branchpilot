@@ -620,3 +620,31 @@ def test_booleans_are_rejected_for_protocol_integer_fields(
 
     with pytest.raises(ValueError, match=rf"protocol\.collection\.{field} must be int"):
         validate_manifest_protocol(manifest, protocol)
+
+
+@pytest.mark.parametrize("section", (None, "scope", "collection", "evaluation"))
+def test_protocol_rejects_unknown_keys(
+    tmp_path: Path,
+    protocol_payload: dict[str, Any],
+    section: str | None,
+) -> None:
+    target = protocol_payload if section is None else protocol_payload[section]
+    target["unexpected"] = True
+    with pytest.raises(ValueError, match="keys do not match schema"):
+        _load_protocol(tmp_path, protocol_payload)
+
+
+@pytest.mark.parametrize(("field", "value"), (("manifest_schema", 2), ("data_schema", 1)))
+def test_manifest_schema_versions_are_exact(
+    tmp_path: Path,
+    protocol_payload: dict[str, Any],
+    field: str,
+    value: int,
+) -> None:
+    protocol = _load_protocol(tmp_path, protocol_payload)
+    data_path = tmp_path / "train.jsonl"
+    data_path.write_bytes(b"artifact\n")
+    manifest = _manifest(protocol, data_path)
+    manifest[field] = value
+    with pytest.raises(ValueError, match=field):
+        validate_manifest_protocol(manifest, protocol)
