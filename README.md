@@ -20,7 +20,7 @@ Complete offline trajectories expose the STOP reward and next prefix at every st
 
 ## Exploratory v0.1 result
 
-The currently committed benchmark is an exploratory point-estimate study from the original v0.1 pipeline: **Qwen2.5-1.5B-Instruct**, 8 stochastic samples per prompt, 512 controller-training trajectories, and 256 controller-held-out trajectories drawn from GSM8K train. It uses one generation seed, one controller seed, a sparse baseline grid, and no confidence intervals. It is retained for provenance while the preregistered official-test benchmark is regenerated with the v0.2 evaluation protocol.
+The currently committed benchmark is an exploratory point-estimate study from the original v0.1 pipeline: **Qwen2.5-1.5B-Instruct**, 8 stochastic samples per prompt, 512 controller-training trajectories, and 256 controller-held-out trajectories drawn from GSM8K train. It uses one generation seed, one controller seed, a sparse baseline grid, no confidence intervals, and a permissive parser that could accept a final number from token-limit-truncated reasoning. It is retained for provenance—not promoted as v0.2 evidence—while the frozen official-test protocol is run with finish-aware parsing and complete baselines.
 
 | Policy | Accuracy | Avg. samples | Comparison |
 |---|---:|---:|---|
@@ -72,7 +72,7 @@ git clone https://github.com/mottopanikeiku/branchpilot
 cd branchpilot
 uv sync --extra dev
 uv run branchpilot quickstart
-xdg-open artifacts/quickstart/report.html
+python -m webbrowser "file://$PWD/artifacts/quickstart/report.html"
 ```
 
 Inspect a specific decision path:
@@ -111,40 +111,81 @@ print(result.answer, result.sample_count, result.completion_tokens)
 
 `PilotSession.run` and `run_async` provide callback loops with the same invariant: the sampler is called exactly once per observed decision and never after STOP.
 
-## Reproduce the Modal benchmark
+OpenAI-compatible backends use the same loop without coupling the core package to a provider SDK:
 
-The model, model revision, CUDA base, vLLM, Transformers, Tokenizers, sampling configuration, and seeds are pinned. The Hugging Face cache persists in a Modal Volume.
+```python
+from openai import AsyncOpenAI
+from branchpilot.answers import extract_answer
+from branchpilot.integrations import run_openai
+
+result = await run_openai(
+    policy,
+    AsyncOpenAI(base_url="http://localhost:8000/v1", api_key="local"),
+    model="Qwen/Qwen2.5-1.5B-Instruct",
+    messages=[{"role": "user", "content": question}],
+    extractor=extract_answer,
+    question=question,
+    cost=0.05,
+    max_samples=8,
+    request_options={"temperature": 0.7, "logprobs": True},
+)
+```
+
+Install the optional client with `uv sync --extra openai`. The adapter requires real completion-token usage, preserves missing log-probabilities as missing, rejects truncated answers, performs no retries or cost guessing, and issues exactly one `n=1` non-streaming request per CONTINUE step.
+
+## Run the frozen Modal benchmark
+
+[`benchmarks/protocol.json`](benchmarks/protocol.json) fixes the dataset/model revisions, original split sizes, sample bank, controller configuration, baseline grid, bootstrap method, success rule, and limitations before canonical generation. The CUDA image is pinned by digest; generated manifests record resolved dataset fingerprints, source indices, prompt/parser hashes, package versions, GPU, parse/truncation counts, tokens, and timing.
 
 ```bash
 uv sync --extra dev --extra modal
 modal setup
 
-# Batched generation on one Modal L4.
+# Generate disjoint controller-train/validation banks and the complete official test.
 uv run modal run modal_app.py \
-  --train-size 768 --test-size 256 --max-samples 8 \
-  --seed 17 --output-dir artifacts/gsm8k
+  --train-size 1600 --validation-size 400 --test-size 1319 \
+  --max-samples 8 --max-tokens 512 --seed 17 \
+  --output-dir artifacts/gsm8k-v2
 
-# Make a deterministic, disjoint 512/256 controller split from generated train trajectories.
-uv run branchpilot split \
-  --data artifacts/gsm8k/train.jsonl \
-  --train-output artifacts/gsm8k/controller-train.jsonl \
-  --test-output artifacts/gsm8k/controller-test.jsonl \
-  --train-size 512 --test-size 256 --seed 23
+# Fail closed on duplicate or overlapping identities.
+uv run branchpilot audit \
+  --data artifacts/gsm8k-v2/train.jsonl \
+  --compare artifacts/gsm8k-v2/validation.jsonl
+uv run branchpilot audit \
+  --data artifacts/gsm8k-v2/train.jsonl \
+  --compare artifacts/gsm8k-v2/test.jsonl
 
 uv run branchpilot train \
-  --data artifacts/gsm8k/controller-train.jsonl \
-  --output artifacts/gsm8k/policy.safetensors \
+  --data artifacts/gsm8k-v2/train.jsonl \
+  --output artifacts/gsm8k-v2/policy.safetensors \
   --hidden-size 128 --epochs 120 --seed 23
 
+# Select comparators on validation and freeze their exact names.
 uv run branchpilot evaluate \
-  --data artifacts/gsm8k/controller-test.jsonl \
-  --policy artifacts/gsm8k/policy.safetensors \
-  --output artifacts/gsm8k/benchmark.json \
-  --svg artifacts/gsm8k/pareto.svg \
-  --html artifacts/gsm8k/report.html
+  --data artifacts/gsm8k-v2/validation.jsonl \
+  --policy artifacts/gsm8k-v2/policy.safetensors \
+  --output artifacts/gsm8k-v2/validation-benchmark.json \
+  --export-baselines artifacts/gsm8k-v2/frozen-baselines.json \
+  --protocol benchmarks/protocol.json
+
+# Turn an average serving budget into a validation-measured λ.
+uv run branchpilot plan \
+  --benchmark artifacts/gsm8k-v2/validation-benchmark.json \
+  --sample-budget 3.0 \
+  --json-output artifacts/gsm8k-v2/operating-point.json
+
+# Evaluate the frozen policy/comparators once on official test.
+uv run branchpilot evaluate \
+  --data artifacts/gsm8k-v2/test.jsonl \
+  --policy artifacts/gsm8k-v2/policy.safetensors \
+  --frozen-baselines artifacts/gsm8k-v2/frozen-baselines.json \
+  --protocol benchmarks/protocol.json \
+  --output artifacts/gsm8k-v2/benchmark.json \
+  --svg artifacts/gsm8k-v2/pareto.svg \
+  --html artifacts/gsm8k-v2/report.html
 ```
 
-The recorded run generated 1,680,954 completion tokens in 607.3 generation-seconds at 2,767.9 output tokens/s on an L4. Image build, model download, and engine initialization are excluded from that generation timer. The workload stays comfortably inside a $30 Modal credit budget.
+The report publishes all fixed counts 1–8, the complete confidence/agreement grids, paired prompt-bootstrap intervals, validation-frozen comparator names, data/policy/protocol hashes, and the declared single-model/single-task limitations. Results are published unchanged whether the prespecified success rule passes or fails.
 
 ## CLI
 
@@ -152,9 +193,12 @@ The recorded run generated 1,680,954 completion tokens in 607.3 generation-secon
 |---|---|
 | `branchpilot quickstart` | Run the complete zero-GPU simulator → train → benchmark → report pipeline |
 | `branchpilot synthetic` | Generate deterministic correlated reasoning trajectories |
-| `branchpilot split` | Create seeded, disjoint controller train/evaluation sets |
-| `branchpilot train` | Fit and save the budget-conditioned Q-controller |
-| `branchpilot evaluate` | Compare against fixed, vote-confidence, and agreement baselines |
+| `branchpilot split` | Create seeded, fingerprinted, verified-disjoint data splits |
+| `branchpilot audit` | Validate identity disjointness and profile parse/logprob/token coverage |
+| `branchpilot train` | Fit exact backward Q-targets and save a safe policy artifact |
+| `branchpilot evaluate` | Bootstrap exhaustive baselines; freeze or consume validation comparators |
+| `branchpilot report` | Deterministically render standalone HTML/SVG evidence from canonical JSON |
+| `branchpilot plan` | Select a conservative validation-measured λ for an average sample budget |
 | `branchpilot demo` | Print every Q-value and STOP/CONTINUE action for one trajectory |
 
 Run `uv run branchpilot <command> --help` for all controls.
@@ -164,10 +208,10 @@ Run `uv run branchpilot <command> --help` for all controls.
 BranchPilot is model-server agnostic. A JSONL trajectory needs a prompt, canonical gold answer, and one or more samples:
 
 ```json
-{"uid":"gsm8k-train-0","question":"...","gold":"72","samples":[{"text":"... #### 72","answer":"72","token_count":94,"mean_logprob":-0.31}],"prompt_tokens":81,"metadata":{"model":"Qwen/Qwen2.5-1.5B-Instruct"}}
+{"schema_version":2,"uid":"gsm8k-train-0","question":"...","gold":"72","samples":[{"text":"... #### 72","answer":"72","token_count":94,"mean_logprob":-0.31,"finish_reason":"stop","parse_status":"parsed"}],"prompt_tokens":81,"metadata":{"model":"Qwen/Qwen2.5-1.5B-Instruct"}}
 ```
 
-Benchmark collection uses strict final-answer delimiters (`####`, XML, or LaTeX boxed forms) before canonicalizing comma, decimal, signed, and fractional numeric values. Unparsed samples remain distinct and can never manufacture false consensus; permissive last-number extraction is explicit opt-in only.
+`extract_answer` is strict by default: it accepts complete `####`, XML, or LaTeX-boxed final answers and canonicalizes comma, decimal, signed, percentage, and fractional numeric forms. The frozen Modal collector separately records `parsed_explicit` and `parsed_fallback`: a last-number fallback is allowed only after the engine reports a completed response, never after token-limit truncation. Unparsed samples remain distinct and cannot manufacture false consensus.
 
 ## Repository map
 
@@ -178,22 +222,30 @@ src/branchpilot/
   policy.py       Torch-free NumPy inference and safe Safetensors artifacts
   runtime.py      label-free sync/async incremental inference sessions
   training.py     exact backward Q-targets and optional PyTorch fitting
-  evaluate.py     fixed, confidence, agreement, and learned policies
-  report.py       dependency-free SVG + standalone HTML research report
+  evaluate.py     exhaustive baselines, paired bootstrap, retained outcomes
+  calibration.py  validation-based average-budget operating-point selection
+  integrity.py    canonical fingerprints, overlap checks, dataset profiles
+  report.py       interactive dependency-free HTML + accessible SVG evidence
   artifacts.py    atomic writes, hashes, and output alias checks
+  integrations/   request-exact OpenAI-compatible async sampling
   synthetic.py    zero-GPU correlated reasoning environment
   cli.py          end-to-end command interface
 modal_app.py       pinned vLLM rollout collection on Modal L4
-benchmarks/        complete held-out metrics, provenance, offline report
+benchmarks/        frozen protocol, complete metrics, provenance, offline report
 tests/             behavioral contracts and edge-case coverage
 ```
 
+## Positioning
+
+BranchPilot does **not** claim the first learned, RL, MDP, or cost-aware adaptive sampler. Direct prior systems include [Adaptive-Consistency](https://arxiv.org/abs/2305.11860), [Early-Stopping Self-Consistency](https://arxiv.org/abs/2401.10480), and 2026's [RL-Guided Adaptive Sampling](https://arxiv.org/abs/2606.03102). BranchPilot's narrower contribution is a deployable control plane: one cost-conditioned policy across a declared interval, exact reuse of every logged prefix/action counterfactual, richer black-box observations, bounded non-executable artifacts, a label-free live session, and evidence/provenance tooling designed to fail closed.
+
 ## Scope and limitations
 
-- The controller needs labeled trajectories for offline training; deployment decisions need no labels.
-- A policy is calibrated to a model, decoding configuration, task distribution, and answer aggregator. Distribution shift should be measured before deployment.
-- Sample count is the optimized cost unit. Token-weighted or wall-clock rewards are natural extensions when serving traces expose reliable per-request costs.
-- This project controls self-consistency sampling; it does not modify model weights or claim a new language-model benchmark score.
+- Offline training needs labeled complete trajectories; deployment receives neither gold labels nor future samples.
+- A policy is calibrated to one model, decoding configuration, task distribution, feature schema, cost model, horizon, and answer aggregator. Distribution shift must be measured before deployment.
+- The current objective prices additional sample count. Samples are reported separately from completion tokens; neither is described as latency, GPU-seconds, energy, or dollars.
+- Batched pre-generated response banks are an offline counterfactual. Live `n=1` sequential serving savings and latency must be measured independently.
+- This project controls self-consistency sampling; it does not modify model weights, own model routing/tree search/layer exit, or claim a new language-model benchmark score.
 
 ## License
 

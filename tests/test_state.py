@@ -80,6 +80,28 @@ def test_numeric_json_answer_is_normalized_to_string() -> None:
     assert sample.answer == "42"
 
 
+def test_parse_provenance_statuses_are_validated() -> None:
+    sample = Sample(
+        "The answer is 42.",
+        "42",
+        5,
+        finish_reason="stop",
+        parse_status="parsed_fallback",
+    )
+    restored = Sample.from_dict(
+        {
+            "text": sample.text,
+            "answer": sample.answer,
+            "token_count": sample.token_count,
+            "finish_reason": sample.finish_reason,
+            "parse_status": sample.parse_status,
+        }
+    )
+    assert restored == sample
+    with pytest.raises(ValueError, match="parsed sample"):
+        Sample("truncated", None, 5, parse_status="parsed_explicit")
+
+
 def test_non_finite_logprob_is_rejected() -> None:
     with pytest.raises(ValueError, match="finite"):
         Sample("#### 42", "42", 2, float("nan"))

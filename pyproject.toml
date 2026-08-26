@@ -36,6 +36,9 @@ dev = [
 modal = [
   "modal>=1.5,<2",
 ]
+openai = [
+  "openai>=2,<3",
+]
 
 [project.urls]
 Homepage = "https://github.com/mottopanikeiku/branchpilot"

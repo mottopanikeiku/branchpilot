@@ -19,6 +19,7 @@ from branchpilot.schema import Rollout, Sample
 
 ARTIFACT_VERSION = 3
 ARCHITECTURE = "mlp-layernorm-silu-v1"
+COST_MODEL = "additional-samples-v1"
 MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
 MAX_HIDDEN_SIZE = 4096
 MAX_SAMPLES = 1024
@@ -37,6 +38,7 @@ _METADATA_KEYS = {
     "format",
     "artifact_version",
     "architecture",
+    "cost_model",
     "feature_names",
     "hidden_size",
     "max_samples",
@@ -325,6 +327,7 @@ class BranchPilotPolicy:
             "format": "branchpilot-policy",
             "artifact_version": str(ARTIFACT_VERSION),
             "architecture": ARCHITECTURE,
+            "cost_model": COST_MODEL,
             "feature_names": json.dumps(FEATURE_NAMES, separators=(",", ":")),
             "hidden_size": str(self.hidden_size),
             "max_samples": str(self.max_samples),
@@ -365,6 +368,8 @@ class BranchPilotPolicy:
                     )
                 if metadata["architecture"] != ARCHITECTURE:
                     raise ValueError("unsupported policy architecture")
+                if metadata["cost_model"] != COST_MODEL:
+                    raise ValueError("unsupported policy cost model")
                 feature_names = tuple(json.loads(metadata["feature_names"]))
                 if feature_names != FEATURE_NAMES:
                     raise ValueError("policy features do not match this BranchPilot version")

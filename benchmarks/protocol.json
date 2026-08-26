@@ -1,0 +1,64 @@
+{
+  "protocol_schema": 1,
+  "status": "frozen-before-canonical-generation",
+  "evidence_tier": "scoped-single-model-single-task",
+  "scope": {
+    "dataset": "openai/gsm8k",
+    "dataset_config": "main",
+    "dataset_revision": "740312add88f781978c0658806c59bc2815b9866",
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "model_revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306"
+  },
+  "collection": {
+    "train_records": 1600,
+    "validation_records": 400,
+    "test_records": 1319,
+    "test_split": "complete-official-test",
+    "samples_per_prompt": 8,
+    "max_completion_tokens": 512,
+    "temperature": 0.7,
+    "top_p": 0.95,
+    "logprobs": 1,
+    "sampling_seed": 17,
+    "selection": "seeded-shuffle-with-recorded-source-indices",
+    "system_prompt_sha256": "6d075970b7cfc84f7724849dbdb629c4d14aafc1a4e57d52517fbe4b338fc280",
+    "parser": "branchpilot.numeric-complete-v3",
+    "completed_output_fallback": "last-numeric-only-when-finish-reason-is-not-length",
+    "truncated_outputs_vote": false
+  },
+  "controller": {
+    "algorithm": "exact-backward-q-regression-v1",
+    "hidden_size": 128,
+    "epochs": 120,
+    "batch_size": 256,
+    "learning_rate": 0.0003,
+    "seed": 23,
+    "max_samples": 8,
+    "training_costs": [0.0, 0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.25]
+  },
+  "evaluation": {
+    "primary_costs": [0.05, 0.075, 0.1],
+    "reported_costs": [0.01, 0.025, 0.05, 0.075, 0.1, 0.15],
+    "objective": "accuracy - lambda * (samples - 1)",
+    "bootstrap_unit": "prompt",
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 17,
+    "confidence": 0.95,
+    "comparator_selection": "best-validation-utility-per-cost-frozen-before-test",
+    "fixed_counts": [1, 2, 3, 4, 5, 6, 7, 8],
+    "confidence_thresholds": [0.5, 0.55, 0.6, 0.65, 0.67, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0],
+    "agreement_streaks": [2, 3]
+  },
+  "decision_rule": {
+    "success": "paired utility interval lower bound above zero at two or more primary costs and nonnegative at the third",
+    "failure_handling": "publish every result unchanged; do not retune, change seeds, or regenerate the canonical bank"
+  },
+  "limitations_declared_in_advance": [
+    "one model family",
+    "one numeric reasoning task",
+    "one generation seed",
+    "batched response-bank counterfactual not yet validated against sequential serving",
+    "sample-count objective is not token, latency, GPU-second, energy, or dollar cost",
+    "baseline tournament is limited to exhaustive fixed counts, vote confidence, and consecutive agreement"
+  ]
+}

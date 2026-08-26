@@ -7,6 +7,7 @@ def test_normalizes_supported_numeric_forms() -> None:
     assert normalize_answer("+1.25") == "5/4"
     assert normalize_answer("-6 / 8") == "-3/4"
     assert normalize_answer(r"\frac{-6}{8}") == "-3/4"
+    assert normalize_answer(r"35\%") == "35"
 
 
 def test_extracts_all_supported_explicit_delimiters_and_forms() -> None:
@@ -22,6 +23,7 @@ def test_extracts_all_supported_explicit_delimiters_and_forms() -> None:
         assert extract_answer(rf"Reasoning 12. \boxed{{{raw}}}") == expected
 
     assert extract_answer(r"Reasoning 12. \boxed{\frac{-6}{8}}") == "-3/4"
+    assert extract_answer(r"Reasoning 12. \boxed{35\%}") == "35"
 
 
 def test_latest_valid_explicit_answer_wins_in_source_order() -> None:

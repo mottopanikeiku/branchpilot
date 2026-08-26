@@ -26,7 +26,8 @@ def trained() -> tuple[BranchPilotPolicy, list[Rollout]]:
 
 def _artifact_parts(path: Path) -> tuple[dict[str, np.ndarray], dict[str, str]]:
     with safe_open(path, framework="np") as artifact:
-        tensors = {name: artifact.get_tensor(name).copy() for name in artifact}
+        names = artifact.keys()  # noqa: SIM118 - safe_open is not iterable
+        tensors = {name: artifact.get_tensor(name).copy() for name in names}
         metadata = dict(artifact.metadata() or {})
     return tensors, metadata
 

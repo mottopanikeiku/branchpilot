@@ -13,7 +13,7 @@ _LATEX_FRACTION = re.compile(r"\\frac\{\s*([-+]?\d+)\s*\}\{\s*([-+]?\d+)\s*\}")
 
 def normalize_answer(raw: str) -> str | None:
     """Canonicalize a numeric answer so decimal, fraction, and comma forms agree."""
-    value = raw.strip().replace("$", "").replace(",", "")
+    value = raw.strip().replace("$", "").replace(",", "").replace(r"\%", "").replace("%", "")
     latex_fraction = _LATEX_FRACTION.fullmatch(value)
     if latex_fraction:
         value = f"{latex_fraction.group(1)}/{latex_fraction.group(2)}"
