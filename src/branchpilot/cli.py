@@ -1003,7 +1003,7 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument(
         "--point-estimate",
         action="store_true",
-        help="use measured average samples instead of the conservative 95% upper bound",
+        help="use measured average samples instead of the conservative 95%% upper bound",
     )
     plan.add_argument("--json-output")
     plan.set_defaults(handler=command_plan)

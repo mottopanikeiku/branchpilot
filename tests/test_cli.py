@@ -1,11 +1,40 @@
+import argparse
 from argparse import Namespace
 from pathlib import Path
 
 import pytest
 
-from branchpilot.cli import _assert_distinct_paths, command_quickstart, command_split
+from branchpilot.cli import (
+    _assert_distinct_paths,
+    build_parser,
+    command_quickstart,
+    command_split,
+)
 from branchpilot.schema import write_jsonl
 from branchpilot.synthetic import make_synthetic_rollouts
+
+
+def test_every_cli_help_surface_renders() -> None:
+    parser = build_parser()
+    subparsers = next(
+        action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
+    )
+    help_by_command = {
+        name: command_parser.format_help() for name, command_parser in subparsers.choices.items()
+    }
+
+    assert set(help_by_command) == {
+        "audit",
+        "demo",
+        "evaluate",
+        "plan",
+        "quickstart",
+        "report",
+        "split",
+        "synthetic",
+        "train",
+    }
+    assert "95% upper bound" in help_by_command["plan"]
 
 
 def test_distinct_path_guard_rejects_normalized_hardlink_and_symlink_aliases(
