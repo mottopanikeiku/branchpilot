@@ -13,7 +13,8 @@ from rich.console import Console
 from rich.table import Table
 
 from branchpilot.artifacts import atomic_write_bytes, atomic_write_text, paths_alias
-from branchpilot.calibration import load_deployment_plan
+from branchpilot.calibration import load_deployment_plan as load_calibrated_plan
+from branchpilot.deployment import load_deployment_plan as load_runtime_plan
 from branchpilot.evaluate import (
     AGREEMENT_STREAKS,
     BOOTSTRAP_CONFIDENCE,
@@ -28,6 +29,7 @@ from branchpilot.integrity import (
     validate_disjoint,
     validate_unique,
 )
+from branchpilot.runtime import PilotSession
 from branchpilot.policy import (
     ARTIFACT_VERSION,
     COST_MODEL,
@@ -805,21 +807,40 @@ def command_report(args: argparse.Namespace) -> None:
     write_report(args.benchmark, args.svg, args.html)
     console.print("Rendered " + ", ".join(path for path in (args.svg, args.html) if path))
 
-
 def command_plan(args: argparse.Namespace) -> None:
-    _assert_distinct_paths(benchmark=args.benchmark, json_output=args.json_output)
+    _assert_distinct_paths(
+        benchmark=args.benchmark,
+        policy=args.policy,
+        json_output=args.json_output,
+    )
     aliases = {
         "learned": "offline-rl",
         "fixed": "fixed",
         "heuristic": "heuristic",
     }
     families = None if not args.family else tuple(aliases[name] for name in args.family)
-    plan = load_deployment_plan(
+    plan = load_calibrated_plan(
         args.benchmark,
         args.sample_budget,
         conservative=not args.point_estimate,
         families=families,
     )
+    serialized = plan.to_dict()
+    if plan.family == "offline-rl":
+        if args.json_output and not args.policy:
+            raise ValueError("writing a learned deployment plan requires --policy")
+        if args.policy:
+            policy_snapshot = _snapshot_file(args.policy, "deployment policy")
+            if policy_snapshot["sha256"] != plan.strategy_spec["policy_sha256"]:
+                raise ValueError("deployment policy SHA-256 does not match benchmark")
+            base = Path(args.json_output).parent if args.json_output else Path.cwd()
+            serialized["strategy_spec"]["policy_artifact"] = os.path.relpath(
+                args.policy,
+                base,
+            )
+    elif args.policy:
+        raise ValueError("--policy is only valid when the selected strategy is learned")
+
     table = Table(title="Validation-calibrated deployment plan", header_style="bold cyan")
     table.add_column("measure")
     table.add_column("value", justify="right")
@@ -827,7 +848,7 @@ def command_plan(args: argparse.Namespace) -> None:
     table.add_row("policy", plan.policy)
     table.add_row(
         "strategy spec",
-        json.dumps(plan.to_dict()["strategy_spec"], separators=(",", ":"), sort_keys=True),
+        json.dumps(serialized["strategy_spec"], separators=(",", ":"), sort_keys=True),
     )
     table.add_row(
         "accuracy",
@@ -850,7 +871,7 @@ def command_plan(args: argparse.Namespace) -> None:
     if args.json_output:
         atomic_write_text(
             args.json_output,
-            json.dumps(plan.to_dict(), indent=2, sort_keys=True) + "\n",
+            json.dumps(serialized, indent=2, sort_keys=True) + "\n",
         )
         console.print(f"Wrote deployment plan to [cyan]{args.json_output}[/]")
 
@@ -858,14 +879,35 @@ def command_plan(args: argparse.Namespace) -> None:
 def command_demo(args: argparse.Namespace) -> None:
     rollouts = read_jsonl(args.data)
     rollout = rollouts[args.index % len(rollouts)]
-    policy = BranchPilotPolicy.load(args.policy)
-    trace = decision_trace(rollout, policy, args.cost)
-    table = Table(title=f"Live policy trace · λ={args.cost:g}", header_style="bold cyan")
+    plan_path = getattr(args, "plan", None)
+    if plan_path:
+        deployment, plan = load_runtime_plan(plan_path)
+        strategy = deployment.strategy
+        cost = deployment.cost
+        label = plan.policy
+    else:
+        strategy = BranchPilotPolicy.load(args.policy)
+        cost = args.cost
+        label = f"learned · λ={cost:g}"
+    horizon = min(strategy.max_samples, len(rollout.samples))
+    session = PilotSession(
+        strategy,
+        rollout.question,
+        cost,
+        prompt_tokens=rollout.prompt_tokens,
+        max_samples=horizon,
+    )
+    for sample in rollout.samples[:horizon]:
+        decision = session.observe(sample)
+        if decision.action == "stop":
+            break
+    trace = session.decisions
+    table = Table(title=f"Decision flight recorder · {label}", header_style="bold cyan")
     table.add_column("sample", justify="right")
     table.add_column("parsed answer", justify="right")
     table.add_column("vote winner", justify="right")
-    table.add_column("Q(stop)", justify="right")
-    table.add_column("Q(continue)", justify="right")
+    table.add_column("stop score", justify="right")
+    table.add_column("continue score", justify="right")
     table.add_column("action")
     for decision in trace:
         sample = rollout.samples[decision.sample_count - 1]
@@ -883,9 +925,11 @@ def command_demo(args: argparse.Namespace) -> None:
     console.print(table)
     final = trace[-1]
     verdict = "correct" if final.majority_answer == rollout.gold else "incorrect"
+    unlaunched = horizon - final.sample_count
     console.print(
-        f"Stopped after [bold]{final.sample_count}[/] samples with "
-        f"[bold]{final.majority_answer}[/] — {verdict}; gold={rollout.gold}"
+        f"Stopped after [bold]{final.sample_count}[/] of [bold]{horizon}[/] allowed samples "
+        f"with [bold]{final.majority_answer}[/] — {verdict}; gold={rollout.gold}. "
+        f"[bold]{unlaunched}[/] requests were never issued."
     )
 
 
@@ -1012,6 +1056,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     plan.add_argument("--benchmark", required=True)
     plan.add_argument("--sample-budget", type=float, required=True)
+    plan.add_argument("--policy", help="policy artifact when exporting a learned plan")
     plan.add_argument(
         "--point-estimate",
         action="store_true",
@@ -1026,11 +1071,13 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--json-output")
     plan.set_defaults(handler=command_plan)
 
-    demo = subparsers.add_parser("demo", help="inspect every stop/continue decision")
+    demo = subparsers.add_parser("demo", help="replay a decision flight recorder")
     demo.add_argument("--data", required=True)
-    demo.add_argument("--policy", required=True)
+    deployment = demo.add_mutually_exclusive_group(required=True)
+    deployment.add_argument("--policy", help="learned Safetensors policy artifact")
+    deployment.add_argument("--plan", help="validation-generated deployment plan JSON")
     demo.add_argument("--index", type=int, default=0)
-    demo.add_argument("--cost", type=float, default=0.05)
+    demo.add_argument("--cost", type=float, default=0.05, help="learned policy λ")
     demo.set_defaults(handler=command_demo)
 
     quickstart = subparsers.add_parser("quickstart", help="run the complete zero-GPU pipeline")

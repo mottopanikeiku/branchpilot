@@ -8,6 +8,7 @@ from branchpilot.calibration import (
     select_deployment_plan,
     select_operating_point,
 )
+from branchpilot.deployment import LoadedDeployment, load_deployment_plan, load_strategy_spec
 from branchpilot.policy import BranchPilotPolicy, Decision
 from branchpilot.runtime import PilotResult, PilotSession
 from branchpilot.schema import Rollout, Sample
@@ -24,11 +25,14 @@ __all__ = [
     "ConsecutiveAgreementStrategy",
     "Decision",
     "DeploymentPlan",
+    "LoadedDeployment",
     "FixedStrategy",
     "OperatingPoint",
     "PilotResult",
     "PilotSession",
     "select_operating_point",
+    "load_deployment_plan",
+    "load_strategy_spec",
     "select_deployment_plan",
     "StoppingStrategy",
     "VoteConfidenceStrategy",

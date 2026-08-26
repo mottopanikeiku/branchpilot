@@ -1,0 +1,28 @@
+{
+  "accuracy_interval": {
+    "lower": 0.8975,
+    "upper": 0.95
+  },
+  "budget_satisfied": true,
+  "conservative": true,
+  "expected_accuracy": 0.925,
+  "expected_samples": 3.1675,
+  "expected_tokens": 817.4375,
+  "family": "heuristic",
+  "policy": "confidence-0.85",
+  "requested_sample_budget": 3.5,
+  "samples_interval": {
+    "lower": 2.94,
+    "upper": 3.3975
+  },
+  "strategy_spec": {
+    "max_samples": 8,
+    "minimum": 2,
+    "threshold": 0.85,
+    "type": "vote_confidence"
+  },
+  "tokens_interval": {
+    "lower": 745.4768124999999,
+    "upper": 892.1286875000001
+  }
+}
