@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import FrozenInstanceError
 
@@ -56,6 +57,17 @@ def _deployment_payload(*rows: dict[str, object], max_samples: int = 4) -> dict[
         },
         "rows": list(rows),
     }
+
+
+def _payload_sha256(payload: object) -> str:
+    canonical = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def test_conservative_selection_uses_upper_bound_instead_of_point_estimate() -> None:
@@ -283,6 +295,49 @@ def test_mixed_deployment_selection_can_choose_exact_heuristic_spec() -> None:
     assert selected.budget_satisfied is True
 
 
+def test_deployment_selection_source_is_stable_and_covers_complete_payload() -> None:
+    payload = _deployment_payload(
+        _row(
+            "confidence-0.75",
+            family="heuristic",
+            cost=0.1,
+            accuracy=0.9,
+            samples=1.7,
+        )
+    )
+    reordered = json.loads(
+        json.dumps(payload),
+        object_pairs_hook=lambda pairs: dict(reversed(pairs)),
+    )
+    changed = json.loads(json.dumps(payload))
+    changed["policy"]["bytes"] = 124
+
+    selected = select_deployment_plan(payload, 2.0)
+    selected_reordered = select_deployment_plan(reordered, 2.0)
+    selected_changed = select_deployment_plan(changed, 2.0)
+
+    assert selected.selection_source == {
+        "benchmark_schema_version": 2,
+        "payload_sha256": _payload_sha256(payload),
+    }
+    assert selected_reordered.selection_source == selected.selection_source
+    assert (
+        selected_changed.selection_source["payload_sha256"]
+        != selected.selection_source["payload_sha256"]
+    )
+    assert (
+        selected.family,
+        selected.policy,
+        selected.strategy_spec,
+    ) == (
+        selected_changed.family,
+        selected_changed.policy,
+        selected_changed.strategy_spec,
+    )
+    with pytest.raises(TypeError):
+        selected.selection_source["payload_sha256"] = "0" * 64  # type: ignore[index]
+
+
 def test_mixed_deployment_selection_can_choose_bound_learned_policy() -> None:
     payload = _deployment_payload(
         _row("BranchPilot λ=0.05", cost=0.05, accuracy=0.94, samples=1.9),
@@ -381,6 +436,11 @@ def test_deployment_exact_specs_round_trip_json_and_loader(tmp_path) -> None:
     serialized = selected.to_dict()
 
     assert serialized == {
+        "schema_version": 1,
+        "selection_source": {
+            "benchmark_schema_version": 2,
+            "payload_sha256": _payload_sha256(payload),
+        },
         "family": "heuristic",
         "policy": "agreement-3",
         "strategy_spec": {
@@ -401,6 +461,8 @@ def test_deployment_exact_specs_round_trip_json_and_loader(tmp_path) -> None:
     assert json.loads(json.dumps(serialized)) == serialized
     with pytest.raises(TypeError):
         selected.strategy_spec["streak"] = 1  # type: ignore[index]
+    with pytest.raises(TypeError):
+        selected.selection_source["payload_sha256"] = "0" * 64  # type: ignore[index]
     with pytest.raises(FrozenInstanceError):
         selected.policy = "changed"  # type: ignore[misc]
 

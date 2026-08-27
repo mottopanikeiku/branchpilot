@@ -20,7 +20,6 @@ from branchpilot.evaluate import (
     BOOTSTRAP_CONFIDENCE,
     CONFIDENCE_THRESHOLDS,
     benchmark,
-    decision_trace,
     pareto_frontier,
 )
 from branchpilot.features import FEATURE_NAMES
@@ -29,7 +28,6 @@ from branchpilot.integrity import (
     validate_disjoint,
     validate_unique,
 )
-from branchpilot.runtime import PilotSession
 from branchpilot.policy import (
     ARTIFACT_VERSION,
     COST_MODEL,
@@ -43,6 +41,7 @@ from branchpilot.provenance import (
     verify_manifest_artifact,
 )
 from branchpilot.report import render_svg, write_report
+from branchpilot.runtime import PilotSession
 from branchpilot.schema import SCHEMA_VERSION, read_jsonl, read_jsonl_bytes, write_jsonl
 from branchpilot.synthetic import make_synthetic_rollouts
 
@@ -807,6 +806,7 @@ def command_report(args: argparse.Namespace) -> None:
     write_report(args.benchmark, args.svg, args.html)
     console.print("Rendered " + ", ".join(path for path in (args.svg, args.html) if path))
 
+
 def command_plan(args: argparse.Namespace) -> None:
     _assert_distinct_paths(
         benchmark=args.benchmark,
@@ -846,6 +846,13 @@ def command_plan(args: argparse.Namespace) -> None:
     table.add_column("value", justify="right")
     table.add_row("family", plan.family)
     table.add_row("policy", plan.policy)
+    source_digest = str(plan.selection_source["payload_sha256"])
+    table.add_row("plan schema", str(plan.schema_version))
+    table.add_row(
+        "selection source",
+        f"benchmark schema v{plan.selection_source['benchmark_schema_version']}, "
+        f"payload SHA-256 {source_digest[:12]}…",
+    )
     table.add_row(
         "strategy spec",
         json.dumps(serialized["strategy_spec"], separators=(",", ":"), sort_keys=True),

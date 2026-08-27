@@ -1,4 +1,6 @@
 import argparse
+import hashlib
+import json
 from argparse import Namespace
 from pathlib import Path
 
@@ -7,6 +9,7 @@ import pytest
 from branchpilot.cli import (
     _assert_distinct_paths,
     build_parser,
+    command_plan,
     command_quickstart,
     command_split,
 )
@@ -90,3 +93,53 @@ def test_quickstart_uses_a_cost_from_custom_grid(tmp_path: Path, capsys) -> None
     output = capsys.readouterr().out
     assert "λ=0.2" in output
     assert (tmp_path / "quickstart" / "report.html").is_file()
+
+
+def test_plan_command_exports_and_displays_selection_source(tmp_path: Path, capsys) -> None:
+    payload = {
+        "schema_version": 2,
+        "max_samples": 4,
+        "rows": [
+            {
+                "family": "heuristic",
+                "policy": "confidence-0.75",
+                "scoring_cost": 0.1,
+                "accuracy": 0.9,
+                "accuracy_interval": {"lower": 0.85, "upper": 0.95},
+                "average_samples": 1.7,
+                "average_samples_interval": {"lower": 1.6, "upper": 1.8},
+                "average_tokens": 120.0,
+                "average_tokens_interval": {"lower": 110.0, "upper": 130.0},
+                "utility": 0.83,
+            }
+        ],
+    }
+    benchmark = tmp_path / "benchmark.json"
+    output = tmp_path / "plan.json"
+    benchmark.write_text(json.dumps(payload), encoding="utf-8")
+    args = Namespace(
+        benchmark=str(benchmark),
+        sample_budget=2.0,
+        policy=None,
+        point_estimate=False,
+        family=["heuristic"],
+        json_output=str(output),
+    )
+
+    command_plan(args)
+
+    exported = json.loads(output.read_text(encoding="utf-8"))
+    canonical = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    digest = hashlib.sha256(canonical).hexdigest()
+    assert exported["schema_version"] == 1
+    assert exported["selection_source"] == {
+        "benchmark_schema_version": 2,
+        "payload_sha256": digest,
+    }
+    assert f"payload SHA-256 {digest[:12]}" in capsys.readouterr().out

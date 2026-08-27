@@ -19,9 +19,13 @@ from branchpilot.evaluate import Interval
 from branchpilot.policy import MAX_ARTIFACT_BYTES, BranchPilotPolicy
 from branchpilot.strategies import StoppingStrategy, strategy_from_spec
 
+_PLAN_SCHEMA_VERSION = 1
+_BENCHMARK_SCHEMA_VERSION = 2
 _LEARNED_KEYS = frozenset({"type", "cost", "policy_artifact", "policy_sha256"})
 _PLAN_KEYS = frozenset(
     {
+        "schema_version",
+        "selection_source",
         "family",
         "policy",
         "strategy_spec",
@@ -37,6 +41,7 @@ _PLAN_KEYS = frozenset(
     }
 )
 _INTERVAL_KEYS = frozenset({"lower", "upper"})
+_SELECTION_SOURCE_KEYS = frozenset({"benchmark_schema_version", "payload_sha256"})
 _PLAN_FAMILY_BY_STRATEGY = {
     "learned": "offline-rl",
     "fixed": "fixed",
@@ -98,16 +103,12 @@ def _load_private_policy(path: Path, expected_sha256: str) -> BranchPilotPolicy:
     try:
         size = os.fstat(descriptor).st_size
         if size < 1 or size > MAX_ARTIFACT_BYTES:
-            raise ValueError(
-                f"policy artifact size must be in [1, {MAX_ARTIFACT_BYTES}] bytes"
-            )
+            raise ValueError(f"policy artifact size must be in [1, {MAX_ARTIFACT_BYTES}] bytes")
         digest = hashlib.sha256()
         copied = 0
         with tempfile.TemporaryDirectory(prefix="branchpilot-policy-") as directory:
             private_path = Path(directory) / "policy.safetensors"
-            private_descriptor = os.open(
-                private_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
-            )
+            private_descriptor = os.open(private_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             try:
                 with os.fdopen(private_descriptor, "wb") as private_file:
                     private_descriptor = -1
@@ -117,9 +118,7 @@ def _load_private_policy(path: Path, expected_sha256: str) -> BranchPilotPolicy:
                             break
                         copied += len(chunk)
                         if copied > MAX_ARTIFACT_BYTES:
-                            raise ValueError(
-                                "policy artifact exceeds the supported size limit"
-                            )
+                            raise ValueError("policy artifact exceeds the supported size limit")
                         digest.update(chunk)
                         private_file.write(chunk)
             finally:
@@ -132,9 +131,7 @@ def _load_private_policy(path: Path, expected_sha256: str) -> BranchPilotPolicy:
         os.close(descriptor)
 
 
-def load_strategy_spec(
-    spec: object, *, base_dir: str | Path = "."
-) -> LoadedDeployment:
+def load_strategy_spec(spec: object, *, base_dir: str | Path = ".") -> LoadedDeployment:
     """Load a strict built-in or content-bound learned deployment spec."""
 
     if type(spec) is not dict:
@@ -264,13 +261,39 @@ def _bool_field(payload: dict[str, object], field: str) -> bool:
     return value
 
 
-def _require_estimate_in_interval(
-    name: str, estimate: float, interval: Interval
-) -> None:
-    if estimate < interval.lower or estimate > interval.upper:
-        raise ValueError(
-            f"deployment plan {name} must fall within its reported interval"
+def _selection_source_field(payload: dict[str, object]) -> dict[str, object]:
+    raw = payload["selection_source"]
+    if type(raw) is not dict:
+        raise TypeError("deployment plan field 'selection_source' must be a dictionary")
+    _require_exact_keys(raw, _SELECTION_SOURCE_KEYS, "deployment plan selection source")
+
+    benchmark_schema_version = raw["benchmark_schema_version"]
+    if type(benchmark_schema_version) is not int:
+        raise TypeError(
+            "deployment plan selection source field 'benchmark_schema_version' must be an integer"
         )
+    if benchmark_schema_version != _BENCHMARK_SCHEMA_VERSION:
+        raise ValueError(
+            "deployment plan selection source field 'benchmark_schema_version' "
+            f"must be {_BENCHMARK_SCHEMA_VERSION}"
+        )
+
+    payload_sha256 = raw["payload_sha256"]
+    if type(payload_sha256) is not str:
+        raise TypeError("deployment plan selection source field 'payload_sha256' must be a string")
+    if len(payload_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in payload_sha256
+    ):
+        raise ValueError(
+            "deployment plan selection source field 'payload_sha256' must be "
+            "64 lowercase hexadecimal characters"
+        )
+    return raw
+
+
+def _require_estimate_in_interval(name: str, estimate: float, interval: Interval) -> None:
+    if estimate < interval.lower or estimate > interval.upper:
+        raise ValueError(f"deployment plan {name} must fall within its reported interval")
 
 
 def load_deployment_plan(
@@ -284,31 +307,30 @@ def load_deployment_plan(
         raise TypeError("deployment plan must be a JSON object")
     _require_exact_keys(payload, _PLAN_KEYS, "deployment plan")
 
+    schema_version = payload["schema_version"]
+    if type(schema_version) is not int:
+        raise TypeError("deployment plan field 'schema_version' must be an integer")
+    if schema_version != _PLAN_SCHEMA_VERSION:
+        raise ValueError(f"deployment plan field 'schema_version' must be {_PLAN_SCHEMA_VERSION}")
+    selection_source = _selection_source_field(payload)
+
     family = _text_field(payload, "family")
     policy_name = _text_field(payload, "policy")
     strategy_spec = payload["strategy_spec"]
     if type(strategy_spec) is not dict:
         raise TypeError("deployment plan field 'strategy_spec' must be a dictionary")
 
-    expected_accuracy = _float_field(
-        payload, "expected_accuracy", minimum=0.0, maximum=1.0
-    )
-    accuracy_interval = _interval_field(
-        payload, "accuracy_interval", minimum=0.0, maximum=1.0
-    )
+    expected_accuracy = _float_field(payload, "expected_accuracy", minimum=0.0, maximum=1.0)
+    accuracy_interval = _interval_field(payload, "accuracy_interval", minimum=0.0, maximum=1.0)
     expected_samples = _float_field(payload, "expected_samples", minimum=1.0)
     samples_interval = _interval_field(payload, "samples_interval", minimum=1.0)
     expected_tokens = _float_field(payload, "expected_tokens", minimum=0.0)
     tokens_interval = _interval_field(payload, "tokens_interval", minimum=0.0)
-    requested_sample_budget = _float_field(
-        payload, "requested_sample_budget", minimum=0.0
-    )
+    requested_sample_budget = _float_field(payload, "requested_sample_budget", minimum=0.0)
     conservative = _bool_field(payload, "conservative")
     budget_satisfied = _bool_field(payload, "budget_satisfied")
 
-    _require_estimate_in_interval(
-        "expected_accuracy", expected_accuracy, accuracy_interval
-    )
+    _require_estimate_in_interval("expected_accuracy", expected_accuracy, accuracy_interval)
     _require_estimate_in_interval("expected_samples", expected_samples, samples_interval)
     _require_estimate_in_interval("expected_tokens", expected_tokens, tokens_interval)
 
@@ -319,18 +341,17 @@ def load_deployment_plan(
     expected_family = _PLAN_FAMILY_BY_STRATEGY[strategy_type]
     if family != expected_family:
         raise ValueError(
-            f"deployment plan family {family!r} does not match strategy type "
-            f"{strategy_type!r}"
+            f"deployment plan family {family!r} does not match strategy type {strategy_type!r}"
         )
     if (
         expected_samples > deployment.strategy.max_samples
         or samples_interval.upper > deployment.strategy.max_samples
     ):
-        raise ValueError(
-            "deployment plan sample metrics exceed the strategy's max_samples"
-        )
+        raise ValueError("deployment plan sample metrics exceed the strategy's max_samples")
 
     plan = DeploymentPlan(
+        schema_version=schema_version,
+        selection_source=selection_source,
         family=family,
         policy=policy_name,
         strategy_spec=deployment.spec,

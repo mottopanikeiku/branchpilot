@@ -46,7 +46,9 @@ def _policy(*, costs: tuple[float, ...] = (0.1, 0.2), stop_bias: float = 1.0) ->
     )
 
 
-def _learned_spec(path: Path, *, cost: float = 0.1, artifact: str | None = None) -> dict[str, object]:
+def _learned_spec(
+    path: Path, *, cost: float = 0.1, artifact: str | None = None
+) -> dict[str, object]:
     return {
         "type": "learned",
         "cost": cost,
@@ -57,6 +59,11 @@ def _learned_spec(path: Path, *, cost: float = 0.1, artifact: str | None = None)
 
 def _plan_payload(spec: dict[str, object], family: str) -> dict[str, object]:
     return {
+        "schema_version": 1,
+        "selection_source": {
+            "benchmark_schema_version": 2,
+            "payload_sha256": "b" * 64,
+        },
         "family": family,
         "policy": "selected-policy",
         "strategy_spec": spec,
@@ -111,9 +118,7 @@ def test_learned_artifact_round_trip_uses_bound_cost(tmp_path: Path) -> None:
     spec = _learned_spec(artifact, cost=0.15)
 
     loaded = load_strategy_spec(spec, base_dir=tmp_path)
-    decision = loaded.strategy.decide_observed(
-        "question", [Sample("answer", "A", 3)], loaded.cost
-    )
+    decision = loaded.strategy.decide_observed("question", [Sample("answer", "A", 3)], loaded.cost)
 
     assert isinstance(loaded.strategy, BranchPilotPolicy)
     assert loaded.cost == 0.15
@@ -166,9 +171,7 @@ def test_descriptor_capture_survives_a_path_swap(
 
     monkeypatch.setattr(deployment_module.os, "read", swap_before_read)
     loaded = load_strategy_spec(spec, base_dir=tmp_path)
-    decision = loaded.strategy.decide_observed(
-        "question", [Sample("answer", "A", 3)], loaded.cost
-    )
+    decision = loaded.strategy.decide_observed("question", [Sample("answer", "A", 3)], loaded.cost)
 
     assert swapped
     assert decision.action == "stop"
@@ -313,6 +316,8 @@ def test_plan_loads_learned_artifact_relative_to_plan_and_returns_metadata(
     assert plan.to_dict() == payload
     with pytest.raises(TypeError):
         plan.strategy_spec["cost"] = 0.2  # type: ignore[index]
+    with pytest.raises(TypeError):
+        plan.selection_source["payload_sha256"] = "0" * 64  # type: ignore[index]
 
 
 @pytest.mark.parametrize(
@@ -337,12 +342,35 @@ def test_plan_loads_learned_artifact_relative_to_plan_and_returns_metadata(
         lambda payload: payload.update(family="heuristic"),
     ],
 )
-def test_plan_rejects_malformed_and_coerced_metric_fields(
-    tmp_path: Path, mutate: object
-) -> None:
-    payload = _plan_payload(
-        {"type": "fixed", "samples": 2, "max_samples": 4}, "fixed"
-    )
+def test_plan_rejects_malformed_and_coerced_metric_fields(tmp_path: Path, mutate: object) -> None:
+    payload = _plan_payload({"type": "fixed", "samples": 2, "max_samples": 4}, "fixed")
+    mutate(payload)  # type: ignore[operator]
+    path = tmp_path / "plan.json"
+    _write_plan(path, payload)
+
+    with pytest.raises((TypeError, ValueError)):
+        load_deployment_plan(path)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda payload: payload.pop("schema_version"),
+        lambda payload: payload.update(schema_version=2),
+        lambda payload: payload.update(schema_version=True),
+        lambda payload: payload.pop("selection_source"),
+        lambda payload: payload.update(selection_source=[]),
+        lambda payload: payload["selection_source"].pop("payload_sha256"),
+        lambda payload: payload["selection_source"].update(extra="untrusted"),
+        lambda payload: payload["selection_source"].update(benchmark_schema_version=1),
+        lambda payload: payload["selection_source"].update(benchmark_schema_version=True),
+        lambda payload: payload["selection_source"].update(payload_sha256="A" * 64),
+        lambda payload: payload["selection_source"].update(payload_sha256="g" * 64),
+        lambda payload: payload["selection_source"].update(payload_sha256="0" * 63),
+    ],
+)
+def test_plan_rejects_invalid_schema_and_selection_source(tmp_path: Path, mutate: object) -> None:
+    payload = _plan_payload({"type": "fixed", "samples": 2, "max_samples": 4}, "fixed")
     mutate(payload)  # type: ignore[operator]
     path = tmp_path / "plan.json"
     _write_plan(path, payload)
@@ -357,7 +385,7 @@ def test_plan_rejects_malformed_and_coerced_metric_fields(
         "[]",
         "{not-json}",
         '{"family":"fixed","family":"fixed"}',
-        "{\"family\": NaN}",
+        '{"family": NaN}',
     ],
 )
 def test_plan_rejects_non_object_malformed_duplicate_and_nonfinite_json(
@@ -371,9 +399,7 @@ def test_plan_rejects_non_object_malformed_duplicate_and_nonfinite_json(
 
 
 def test_plan_rejects_symbolic_link(tmp_path: Path) -> None:
-    payload = _plan_payload(
-        {"type": "fixed", "samples": 2, "max_samples": 4}, "fixed"
-    )
+    payload = _plan_payload({"type": "fixed", "samples": 2, "max_samples": 4}, "fixed")
     target = tmp_path / "target.json"
     link = tmp_path / "plan.json"
     _write_plan(target, payload)

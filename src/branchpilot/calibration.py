@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from collections.abc import Iterable, Mapping
@@ -16,7 +17,8 @@ from branchpilot.strategies import (
     VoteConfidenceStrategy,
 )
 
-_SCHEMA_VERSION = 2
+_BENCHMARK_SCHEMA_VERSION = 2
+_DEPLOYMENT_PLAN_SCHEMA_VERSION = 1
 _LEARNED_FAMILY = "offline-rl"
 
 
@@ -56,6 +58,9 @@ class OperatingPoint:
 class DeploymentPlan:
     """A deployable strategy selected from validation-measured candidates."""
 
+    schema_version: int
+    selection_source: Mapping[str, object]
+
     family: str
     policy: str
     strategy_spec: Mapping[str, Any]
@@ -70,10 +75,13 @@ class DeploymentPlan:
     budget_satisfied: bool
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "selection_source", MappingProxyType(dict(self.selection_source)))
         object.__setattr__(self, "strategy_spec", MappingProxyType(dict(self.strategy_spec)))
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema_version": self.schema_version,
+            "selection_source": dict(self.selection_source),
             "family": self.family,
             "policy": self.policy,
             "strategy_spec": dict(self.strategy_spec),
@@ -87,6 +95,24 @@ class DeploymentPlan:
             "conservative": self.conservative,
             "budget_satisfied": self.budget_satisfied,
         }
+
+
+def _benchmark_selection_source(payload: Any) -> Mapping[str, object]:
+    """Identify the complete selection input without claiming its authenticity."""
+    try:
+        canonical = json.dumps(
+            payload,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("benchmark payload must be canonicalizable as finite JSON") from exc
+    return {
+        "benchmark_schema_version": _BENCHMARK_SCHEMA_VERSION,
+        "payload_sha256": hashlib.sha256(canonical).hexdigest(),
+    }
 
 
 def _finite_number(
@@ -186,10 +212,11 @@ def _benchmark_rows(payload_or_rows: Any) -> list[Mapping[str, Any]]:
             if (
                 isinstance(version, bool)
                 or not isinstance(version, int)
-                or version != _SCHEMA_VERSION
+                or version != _BENCHMARK_SCHEMA_VERSION
             ):
                 raise ValueError(
-                    f"benchmark payload must use schema_version {_SCHEMA_VERSION}; got {version!r}"
+                    "benchmark payload must use schema_version "
+                    f"{_BENCHMARK_SCHEMA_VERSION}; got {version!r}"
                 )
         raw_rows = payload_or_rows["rows"]
 
@@ -368,8 +395,8 @@ def _deployment_families(families: Iterable[str] | None) -> frozenset[str]:
 def _deployment_payload(payload: Any) -> tuple[list[Mapping[str, Any]], int]:
     if not isinstance(payload, Mapping):
         raise ValueError("deployment selection requires a benchmark payload object")
-    if payload.get("schema_version") != _SCHEMA_VERSION:
-        raise ValueError(f"benchmark payload must use schema_version {_SCHEMA_VERSION}")
+    if payload.get("schema_version") != _BENCHMARK_SCHEMA_VERSION:
+        raise ValueError(f"benchmark payload must use schema_version {_BENCHMARK_SCHEMA_VERSION}")
     if "max_samples" not in payload:
         raise ValueError("benchmark payload is missing required field 'max_samples'")
     maximum = payload["max_samples"]
@@ -539,6 +566,7 @@ def _deployment_plans(
     budget: float,
     conservative: bool,
     families: frozenset[str],
+    selection_source: Mapping[str, object],
 ) -> list[DeploymentPlan]:
     plans: list[DeploymentPlan] = []
     for index, row in enumerate(rows):
@@ -560,6 +588,8 @@ def _deployment_plans(
         ) = _deployment_metrics(row, index, max_samples)
         plans.append(
             DeploymentPlan(
+                schema_version=_DEPLOYMENT_PLAN_SCHEMA_VERSION,
+                selection_source=selection_source,
                 family=family,
                 policy=policy,
                 strategy_spec=strategy_spec,
@@ -616,6 +646,7 @@ def select_deployment_plan(
     budget, use_upper_bound = _deployment_budget(sample_budget, conservative)
     selected_families = _deployment_families(families)
     rows, max_samples = _deployment_payload(payload)
+    selection_source = _benchmark_selection_source(payload)
     plans = _deduplicate_deployment_plans(
         _deployment_plans(
             payload,
@@ -624,6 +655,7 @@ def select_deployment_plan(
             budget,
             use_upper_bound,
             selected_families,
+            selection_source,
         )
     )
     feasible = [
