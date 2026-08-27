@@ -1,0 +1,182 @@
+{
+  "protocol_id": "branchpilot-v3-development-gate",
+  "protocol_version": 1,
+  "frozen_at_utc": "2026-08-27T07:25:48Z",
+  "status_at_freeze": "frozen_before_capacity_rerun_results_and_before_any_fresh_holdout_generation",
+  "purpose": "Select a lower-capacity controller using question-grouped train-only evidence, then permit at most one newly generated source-index-disjoint holdout evaluation.",
+  "claims_boundary": {
+    "canonical_v0_2": "immutable negative result; no file in its evidence bundle may be regenerated or replaced",
+    "gsm8k_v2_validation": "diagnosis-only after the published failure; prohibited for v3 fitting, selection, thresholds, or promotion",
+    "gsm8k_official_test": "prohibited for v3 fitting, selection, diagnosis, tuning, or evaluation",
+    "capacity_screen": "development evidence, not a confirmatory generalization claim",
+    "fresh_holdout": "confirmatory only if every capacity gate passes before generation"
+  },
+  "immutable_inputs": {
+    "train_rollouts": {
+      "path": "artifacts/gsm8k-v2/train.jsonl",
+      "sha256": "abc78e7a3b27a368aa90742fe135b40d732a91410b640a56e2cb0387d971b9ec",
+      "rollouts": 1600,
+      "source_split": "train"
+    },
+    "diagnosis_only_validation": {
+      "path": "artifacts/gsm8k-v2/validation.jsonl",
+      "sha256": "f09a5a02f7e1edfc01ab0f018c8dac494533e54d57a4998c394c06fed3929032",
+      "rollouts": 400
+    },
+    "failed_v0_2_policy": {
+      "path": "artifacts/gsm8k-v2/policy.safetensors",
+      "sha256": "cb4e9ff90ced481bea94565d3a28ea8f46d22204074cae096044610c104501a1"
+    },
+    "dataset": {
+      "name": "openai/grade-school-math",
+      "config": "main",
+      "revision": "3101c7d5072418e28b9008a6636bde82a006892c"
+    },
+    "model": {
+      "name": "Qwen/Qwen2.5-1.5B-Instruct",
+      "revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306"
+    }
+  },
+  "prior_execution_disclosure": {
+    "description": "An earlier bounded CPU runner completed the four small candidates on 20 folds but was interrupted during its 128-wide control and yielded no metrics or recoverable artifacts. Before this protocol freeze, the parent observed only candidate/fold progress, not any outcome.",
+    "use": "none; the capacity rerun specified below supersedes it and must be completely materialized before a decision",
+    "difference": "the rerun predeclares batch_size 2048 and omits the already-diagnosed 128-wide control"
+  },
+  "capacity_screen": {
+    "result_path": "benchmarks/gsm8k-v3-capacity.json",
+    "folds": 5,
+    "grouping_unit": "rollout uid",
+    "assignment": {
+      "algorithm": "sort ascending by (sha256(UTF8('branchpilot-v3-capacity-v1\\0' + uid)).hexdigest(), uid), then assign sorted_position modulo 5",
+      "expected_fold_size": 320
+    },
+    "training": {
+      "max_samples": 8,
+      "batch_size": 2048,
+      "learning_rate": 0.0003,
+      "weight_decay": 0.0001,
+      "costs": [
+        0.0,
+        0.01,
+        0.025,
+        0.05,
+        0.075,
+        0.1,
+        0.15,
+        0.25
+      ],
+      "seed": "31000 + held-out fold index",
+      "target_algorithm": "exact-backward-q-regression-v1"
+    },
+    "candidates": [
+      {
+        "name": "h8-e20",
+        "hidden_size": 8,
+        "epochs": 20
+      },
+      {
+        "name": "h8-e40",
+        "hidden_size": 8,
+        "epochs": 40
+      },
+      {
+        "name": "h16-e20",
+        "hidden_size": 16,
+        "epochs": 20
+      },
+      {
+        "name": "h16-e40",
+        "hidden_size": 16,
+        "epochs": 40
+      }
+    ],
+    "primary_costs": [
+      0.01,
+      0.025,
+      0.05
+    ],
+    "comparator": {
+      "name": "agreement-2",
+      "strategy_spec": {
+        "type": "consecutive_agreement",
+        "streak": 2,
+        "max_samples": 8
+      }
+    },
+    "paired_bootstrap": {
+      "resamples": 10000,
+      "seed": 32003,
+      "unit": "held-out prompt",
+      "interval": "two-sided percentile 95% for learned-minus-comparator utility"
+    },
+    "promotion_gate": {
+      "pooled_mean_utility_delta": "strictly positive at all three primary costs",
+      "pooled_lower_95_bound": "nonnegative at at least two of three primary costs",
+      "worst_fold_mean_utility_delta": "not below -0.01 for any primary cost",
+      "all_conditions_required": true
+    },
+    "selection_if_multiple_pass": [
+      "largest minimum pooled lower 95% utility bound across primary costs",
+      "largest mean pooled utility delta across primary costs",
+      "smaller hidden_size",
+      "fewer epochs",
+      "lexicographically smaller candidate name"
+    ],
+    "no_go_rule": "If no candidate passes, freeze an explicit NO-GO result and issue no fresh-holdout model requests."
+  },
+  "fresh_holdout": {
+    "authorization": "only the selected capacity candidate passing every promotion gate",
+    "size": 500,
+    "source_split": "GSM8K train only",
+    "source_index_selection": "exclude every source_index present in the immutable train and diagnosis-only validation rollouts; rank each remaining index by (sha256(UTF8('branchpilot-v3-holdout-v1\\0' + decimal_index)).hexdigest(), index); select the first 500",
+    "selection_must_precede_label_or_prompt_access": true,
+    "artifact_freeze_before_generation": [
+      "train selected configuration once on all 1600 immutable train rollouts",
+      "save Safetensors artifact and SHA-256",
+      "freeze agreement-2 comparator and all costs",
+      "commit protocol, capacity result, artifact metadata, source-index list, and hashes"
+    ],
+    "generation": {
+      "backend": "Modal",
+      "gpu": "A10G:1",
+      "model_samples_per_prompt": 8,
+      "temperature": 0.7,
+      "top_p": 0.95,
+      "max_new_tokens": 512,
+      "parser": "branchpilot.numeric-complete-v3",
+      "model_seed": 29,
+      "maximum_prompts": 500,
+      "maximum_model_requests": 4000,
+      "retries": 0
+    },
+    "evaluation": {
+      "primary_costs": [
+        0.01,
+        0.025,
+        0.05
+      ],
+      "paired_bootstrap_resamples": 10000,
+      "paired_bootstrap_seed": 33003,
+      "criterion": "learned-minus-agreement-2 utility lower 95% bound strictly positive at two primary costs and nonnegative at the third",
+      "report_all": [
+        "accuracy",
+        "average samples",
+        "average completion tokens",
+        "utility",
+        "paired intervals",
+        "stop histograms",
+        "parse and truncation slices",
+        "elapsed time, requests, tokens, and compute with units",
+        "every failed, aborted, missing, or excluded prompt"
+      ],
+      "accesses": 1,
+      "post_access_tuning": "prohibited"
+    }
+  },
+  "decision_semantics": {
+    "capacity_pass": "authorizes the one frozen fresh-holdout workflow but is not itself a success claim",
+    "capacity_no_go": "scientifically complete stopped outcome with zero fresh-holdout requests",
+    "fresh_holdout_pass": "supports only this model, dataset source split, parser, sampling configuration, and comparator",
+    "fresh_holdout_fail": "must be published as a complete negative result without candidate substitution"
+  }
+}
