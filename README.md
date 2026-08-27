@@ -6,7 +6,7 @@ BranchPilot is a deployable control plane for sequential LLM sampling. After eve
 
 [Zero-GPU quick success](#zero-gpu-quick-success) · [Deployable strategies](#deployable-strategies) · [Gateway](#openai-compatible-gateway) · [Canonical v0.2 evidence · FAIL](https://mottopanikeiku.github.io/branchpilot/evidence/v0.2/)
 
-<img src="assets/decision-flight-recorder.svg" alt="Decision flight recorder: confidence-0.85 observes two matching answers, stops after 2 of 8 allowed samples, and marks requests 3 through 8 not issued." width="100%">
+<img src="https://mottopanikeiku.github.io/branchpilot/assets/decision-flight-recorder.svg" alt="Decision flight recorder: confidence-0.85 observes two matching answers, stops after 2 of 8 allowed samples, and marks requests 3 through 8 not issued." width="100%">
 
 The trace is deliberately literal: request 1 is observed, request 2 is observed, confidence reaches 1.00, and the confidence-0.85 strategy stops. Requests 3–8 are labeled **NOT ISSUED**. BranchPilot controls marginal sample requests; it does not turn sample count into a claim about latency, GPU time, energy, or dollars.
 
@@ -70,7 +70,7 @@ Learned deployments use a bounded, non-executable Safetensors artifact. Their pl
 
 ### Choose from validation with `plan`
 
-`branchpilot plan` reads deployable validation rows across **learned**, **fixed**, and **heuristic** families. By default a row is feasible only when its upper 95% average-sample bound meets the requested budget. Among feasible rows it chooses the highest measured validation accuracy, then the lower measured sample count; if none is feasible it returns the minimum-sample row with `budget_satisfied: false`.
+`branchpilot plan` reads deployable validation rows across **learned**, **fixed**, and **heuristic** families. Every exported plan is schema-versioned and records a canonical SHA-256 digest of the complete selection payload. By default a row is feasible only when its upper 95% average-sample bound meets the requested budget. Among feasible rows it chooses the highest measured validation accuracy, then the lower measured sample count; if none is feasible it returns the minimum-sample row with `budget_satisfied: false`.
 
 Inspect the cross-strategy choice without exporting it:
 
@@ -262,6 +262,19 @@ This FAIL is evidence about the canonical learned strategy, not a claim that the
 **Machine evidence:** [test JSON](benchmarks/gsm8k-v2.json) · [validation freeze](benchmarks/gsm8k-v2-validation.json) · [generation manifest](benchmarks/manifest-v2.json) · [protocol](benchmarks/protocol.json)
 
 The exploratory v0.1 point-estimate study is retained only for provenance: [frozen report](benchmarks/report.html), [aggregate JSON](benchmarks/gsm8k.json), and [manifest](benchmarks/manifest.json).
+
+### Train-only v3 capacity gate — NO-GO
+
+After diagnosing the v0.2 overfit, a new protocol was [frozen and committed](benchmarks/protocol-v3-development.json) before receiving rerun results. It compared four smaller controllers across five UID-grouped folds of the 1,600 controller-training prompts. Promotion required positive pooled utility deltas versus `agreement-2` at all three primary costs, nonnegative lower 95% bounds at two, and no fold below $-0.01$.
+
+| Candidate | $\lambda=0.01$ utility $\Delta$ [95% CI] | $\lambda=0.025$ | $\lambda=0.05$ |
+|---|---:|---:|---:|
+| hidden 8 · 20 epochs | $-0.0166$ [$-0.0286$, $-0.0048$] | $-0.0027$ [$-0.0143$, $0.0089$] | $+0.0221$ [$+0.0097$, $+0.0346$] |
+| hidden 8 · 40 epochs | $-0.0059$ [$-0.0137$, $+0.0018$] | $-0.0061$ [$-0.0146$, $+0.0022$] | $+0.0109$ [$+0.0012$, $+0.0203$] |
+| hidden 16 · 20 epochs | $-0.0081$ [$-0.0173$, $+0.0010$] | $-0.0036$ [$-0.0124$, $+0.0053$] | $+0.0068$ [$-0.0027$, $+0.0163$] |
+| hidden 16 · 40 epochs | $-0.0038$ [$-0.0101$, $+0.0027$] | $-0.0127$ [$-0.0192$, $-0.0062$] | $-0.0045$ [$-0.0123$, $+0.0033$] |
+
+No candidate passed. The protocol therefore authorized **no fresh holdout**: zero Modal jobs and zero model requests were issued, and no new holdout labels or outputs were observed. Complete fold metrics, training times, gate calculations, rejected-run disclosure, and all 19,200 paired prompt outcomes are preserved in the [result](benchmarks/gsm8k-v3-capacity.json), [compressed outcomes](benchmarks/gsm8k-v3-capacity-outcomes.json.gz), and [checksums](benchmarks/checksums-v3-development.txt).
 
 ## How the learned policy works
 

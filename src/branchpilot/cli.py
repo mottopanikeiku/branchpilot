@@ -974,7 +974,7 @@ def command_quickstart(args: argparse.Namespace) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="branchpilot",
-        description="Learn when another LLM reasoning sample is worth its inference cost.",
+        description="Adaptive inference control for sequential LLM sampling.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -1059,7 +1059,7 @@ def build_parser() -> argparse.ArgumentParser:
     report.set_defaults(handler=command_report)
 
     plan = subparsers.add_parser(
-        "plan", help="select a validation-measured cost for an average sample budget"
+        "plan", help="select a validation-measured strategy for an average sample budget"
     )
     plan.add_argument("--benchmark", required=True)
     plan.add_argument("--sample-budget", type=float, required=True)
