@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Require the tagged commit to be main
+        run: |
+          git fetch --no-tags origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          python-version: "3.14"
+      - name: Install locked build environment
+        run: uv sync --locked --extra build
+      - name: Verify tag matches package and citation
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          uv run --no-project python - <<'PY'
+          import os
+          import pathlib
+          import tomllib
+          version = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
+          citation = next(
+              line.split(":", 1)[1].strip()
+              for line in pathlib.Path("CITATION.cff").read_text().splitlines()
+              if line.startswith("version:")
+          )
+          expected = os.environ["RELEASE_TAG"].removeprefix("v")
+          assert version == expected == citation, (version, citation, expected)
+          PY
+      - name: Build wheel and source distribution
+        run: uv build --no-build-isolation
+      - name: Smoke-test the built core wheel
+        run: |
+          uv venv /tmp/branchpilot-release --python 3.14
+          uv pip install --python /tmp/branchpilot-release/bin/python dist/branchpilot-*.whl
+          /tmp/branchpilot-release/bin/python -c "import sys, branchpilot; assert 'torch' not in sys.modules"
+          /tmp/branchpilot-release/bin/branchpilot --help
+          /tmp/branchpilot-release/bin/branchpilot-gateway --help
+      - name: Generate artifact checksums
+        run: (cd dist && sha256sum branchpilot-*.whl branchpilot-*.tar.gz > SHA256SUMS)
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: |
+            dist/branchpilot-*.whl
+            dist/branchpilot-*.tar.gz
+            dist/SHA256SUMS
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}"
+          dist/branchpilot-*.whl
+          dist/branchpilot-*.tar.gz
+          dist/SHA256SUMS
+          --verify-tag
+          --generate-notes
+          --title "BranchPilot ${GITHUB_REF_NAME}"
