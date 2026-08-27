@@ -397,6 +397,9 @@ def _deployment_payload(payload: Any) -> tuple[list[Mapping[str, Any]], int]:
         raise ValueError("deployment selection requires a benchmark payload object")
     if payload.get("schema_version") != _BENCHMARK_SCHEMA_VERSION:
         raise ValueError(f"benchmark payload must use schema_version {_BENCHMARK_SCHEMA_VERSION}")
+    data = payload.get("data")
+    if not isinstance(data, Mapping) or data.get("split") != "validation":
+        raise ValueError("deployment selection requires benchmark data split 'validation'")
     if "max_samples" not in payload:
         raise ValueError("benchmark payload is missing required field 'max_samples'")
     maximum = payload["max_samples"]

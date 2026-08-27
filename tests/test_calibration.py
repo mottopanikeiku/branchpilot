@@ -49,6 +49,7 @@ def _row(
 def _deployment_payload(*rows: dict[str, object], max_samples: int = 4) -> dict[str, object]:
     return {
         "schema_version": 2,
+        "data": {"split": "validation"},
         "max_samples": max_samples,
         "policy": {
             "path": "policy.safetensors",
@@ -509,6 +510,19 @@ def test_deployment_rejects_unknown_policy_naming(family: str, policy: str) -> N
     payload = _deployment_payload(_row(policy, family=family, cost=0.1, accuracy=0.8, samples=1.5))
 
     with pytest.raises(ValueError, match="policy name"):
+        select_deployment_plan(payload, 2.0)
+
+
+def test_deployment_requires_explicit_validation_split() -> None:
+    payload = _deployment_payload(
+        _row("fixed-1", family="fixed", cost=0.1, accuracy=0.8, samples=1.0)
+    )
+    payload["data"] = {"split": "test"}
+    with pytest.raises(ValueError, match="data split 'validation'"):
+        select_deployment_plan(payload, 2.0)
+
+    del payload["data"]
+    with pytest.raises(ValueError, match="data split 'validation'"):
         select_deployment_plan(payload, 2.0)
 
 

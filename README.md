@@ -21,7 +21,7 @@ uv sync --extra train
 uv run branchpilot quickstart
 
 uv run branchpilot plan \
-  --benchmark artifacts/quickstart/benchmark.json \
+  --benchmark artifacts/quickstart/validation-benchmark.json \
   --sample-budget 3.5 \
   --family heuristic \
   --json-output artifacts/quickstart/plan.json
@@ -32,7 +32,7 @@ uv run branchpilot demo \
   --index 7
 ```
 
-`quickstart` writes synthetic train/test trajectories, a Safetensors policy, exhaustive fixed/heuristic/learned validation rows, and a standalone report under `artifacts/quickstart/`. `demo --plan` prints the selected strategy, every observed-prefix decision, the stopping point, and how many allowed requests were never issued.
+`quickstart` writes disjoint synthetic train, validation, and test trajectories, a Safetensors policy, exhaustive fixed/heuristic/learned validation rows, and a standalone validation report under `artifacts/quickstart/`. The plan is selected only from `validation-benchmark.json`; `demo --plan` then replays it on `test.jsonl`, printing every observed-prefix decision, the stopping point, and how many allowed requests were never issued.
 
 ## The control loop
 
@@ -70,13 +70,13 @@ Learned deployments use a bounded, non-executable Safetensors artifact. Their pl
 
 ### Choose from validation with `plan`
 
-`branchpilot plan` reads deployable validation rows across **learned**, **fixed**, and **heuristic** families. Every exported plan is schema-versioned and records a canonical SHA-256 digest of the complete selection payload. By default a row is feasible only when its upper 95% average-sample bound meets the requested budget. Among feasible rows it chooses the highest measured validation accuracy, then the lower measured sample count; if none is feasible it returns the minimum-sample row with `budget_satisfied: false`.
+`branchpilot plan` reads deployable validation rows across **learned**, **fixed**, and **heuristic** families and rejects benchmark payloads not explicitly marked as the validation split. Every exported plan is schema-versioned and records a canonical SHA-256 digest of the complete selection payload. By default a row is feasible only when its upper 95% average-sample bound meets the requested budget. Among feasible rows it chooses the highest measured validation accuracy, then the lower measured sample count; if none is feasible it returns the minimum-sample row with `budget_satisfied: false`.
 
 Inspect the cross-strategy choice without exporting it:
 
 ```bash
 uv run branchpilot plan \
-  --benchmark artifacts/quickstart/benchmark.json \
+  --benchmark artifacts/quickstart/validation-benchmark.json \
   --sample-budget 3.5
 ```
 
@@ -84,7 +84,7 @@ Export a built-in strategy by limiting the rerun to its family and omitting `--p
 
 ```bash
 uv run branchpilot plan \
-  --benchmark artifacts/quickstart/benchmark.json \
+  --benchmark artifacts/quickstart/validation-benchmark.json \
   --sample-budget 3.5 \
   --family heuristic \
   --json-output artifacts/quickstart/plan.json
@@ -94,7 +94,7 @@ A learned export **requires** the matching policy so the plan can bind its conte
 
 ```bash
 uv run branchpilot plan \
-  --benchmark artifacts/quickstart/benchmark.json \
+  --benchmark artifacts/quickstart/validation-benchmark.json \
   --sample-budget 3.5 \
   --family learned \
   --policy artifacts/quickstart/policy.safetensors \
@@ -242,7 +242,7 @@ The adapter requires real completion-token usage, preserves missing log-probabil
 
 The locked evaluation used **Qwen2.5-1.5B-Instruct**, 1,600 controller-training prompts, 400 validation prompts, and the complete **1,319-example official GSM8K test**, with 8 samples per prompt. Comparator names were selected on validation and committed before test. Every point uses 10,000 paired prompt-bootstrap resamples.
 
-**The prespecified learned-policy success rule did not pass.** Utility-delta 95% lower bounds at the three primary marginal sample costs were $-0.0152$, $-0.0422$, and $-0.0491$; the protocol required at least two to be strictly positive and the third nonnegative. The learned policy advanced the fixed-count sample frontier at some operating points, but the frozen adaptive agreement/confidence comparators were stronger under this single-model, single-task utility comparison.
+**The prespecified learned-policy success rule did not pass.** Utility-delta 95% lower bounds at the three primary marginal sample costs were $-0.0152$, $-0.0422$, and $-0.0491$; the protocol required at least two to be strictly positive and the third nonnegative. The learned policy advanced the fixed-count sample frontier at some operating points, but the validation-frozen comparators were stronger under this single-model, single-task utility comparison.
 
 | Policy | Accuracy | Avg. samples | What the official test shows |
 |---|---:|---:|---|
@@ -265,7 +265,7 @@ The exploratory v0.1 point-estimate study is retained only for provenance: [froz
 
 ### Train-only v3 capacity gate — NO-GO
 
-After diagnosing the v0.2 overfit, a new protocol was [frozen and committed](benchmarks/protocol-v3-development.json) before receiving rerun results. It compared four smaller controllers across five UID-grouped folds of the 1,600 controller-training prompts. Promotion required positive pooled utility deltas versus `agreement-2` at all three primary costs, nonnegative lower 95% bounds at two, and no fold below $-0.01$.
+After the v0.2 learned-policy criterion failed, a new protocol was [frozen and committed](benchmarks/protocol-v3-development.json) before receiving rerun results. It compared four smaller controllers across five UID-grouped folds of the 1,600 controller-training prompts. Promotion required positive pooled utility deltas versus `agreement-2` at all three primary costs, nonnegative lower 95% bounds at two, and no fold below $-0.01$.
 
 | Candidate | $\lambda=0.01$ utility $\Delta$ [95% CI] | $\lambda=0.025$ | $\lambda=0.05$ |
 |---|---:|---:|---:|
@@ -274,7 +274,7 @@ After diagnosing the v0.2 overfit, a new protocol was [frozen and committed](ben
 | hidden 16 · 20 epochs | $-0.0081$ [$-0.0173$, $+0.0010$] | $-0.0036$ [$-0.0124$, $+0.0053$] | $+0.0068$ [$-0.0027$, $+0.0163$] |
 | hidden 16 · 40 epochs | $-0.0038$ [$-0.0101$, $+0.0027$] | $-0.0127$ [$-0.0192$, $-0.0062$] | $-0.0045$ [$-0.0123$, $+0.0033$] |
 
-No candidate passed. The protocol therefore authorized **no fresh holdout**: zero Modal jobs and zero model requests were issued, and no new holdout labels or outputs were observed. Complete fold metrics, training times, gate calculations, rejected-run disclosure, and all 19,200 paired prompt outcomes are preserved in the [result](benchmarks/gsm8k-v3-capacity.json), [compressed outcomes](benchmarks/gsm8k-v3-capacity-outcomes.json.gz), and [checksums](benchmarks/checksums-v3-development.txt).
+No candidate passed. Fresh-holdout generation was not authorized, and the result records zero fresh-holdout model requests at the decision. Complete fold metrics, training times, gate calculations, rejected-run disclosure, and all 19,200 paired prompt outcomes are preserved in the [result](benchmarks/gsm8k-v3-capacity.json), [compressed outcomes](benchmarks/gsm8k-v3-capacity-outcomes.json.gz), and [checksums](benchmarks/checksums-v3-development.txt).
 
 ## How the learned policy works
 

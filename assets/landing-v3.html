@@ -296,7 +296,7 @@ pre { width: max-content; min-width: 100%; margin: 0; padding: 0 var(--space-5) 
       </div>
       <aside class="hero-aside" aria-label="Deployment summary">
         <strong>Observe → decide → request or stop</strong>
-        <p>Put policy selection in front of any sequential OpenAI-compatible backend. Requests after STOP are never issued.</p>
+        <p>Put policy selection in front of a text-only, non-streaming OpenAI-compatible backend that reports usage. Requests after STOP are never issued.</p>
         <div class="action-row">
           <a class="button button-primary" href="https://github.com/mottopanikeiku/branchpilot#readme">Start in the README</a>
           <a class="button button-secondary" href="https://mottopanikeiku.github.io/branchpilot/evidence/v0.2/">See v0.2 evidence</a>
@@ -390,6 +390,7 @@ export BRANCHPILOT_UPSTREAM_KEY=upstream-secret
   -H "Content-Type: application/json" \
   -d '{"model":"math-local","messages":[{"role":"user","content":"What is 17 + 25?"}]}'</span>
 
+<span class="code-comment"># Illustrative response when the first two parsed answers agree</span>
 <span class="code-header">x-branchpilot-samples: 2</span>
 <span class="code-header">x-branchpilot-strategy: vote_confidence</span>
 <span class="code-header">x-branchpilot-selection: majority</span></code></pre>
@@ -411,7 +412,7 @@ export BRANCHPILOT_UPSTREAM_KEY=upstream-secret
           <span>FAIL</span>
         </div>
         <div class="evidence-copy">
-          <h3>Learned policy did not beat its frozen adaptive comparators.</h3>
+          <h3>Learned policy did not beat its validation-frozen comparators.</h3>
           <p>Primary marginal-sample utility lower bounds were −0.0152, −0.0422, and −0.0491. The protocol required two strictly positive bounds and a third nonnegative bound.</p>
         </div>
         <a class="button button-secondary" href="https://mottopanikeiku.github.io/branchpilot/evidence/v0.2/">Open canonical evidence</a>

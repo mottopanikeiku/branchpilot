@@ -81,6 +81,7 @@ def test_quickstart_uses_a_cost_from_custom_grid(tmp_path: Path, capsys) -> None
     args = Namespace(
         output_dir=str(tmp_path / "quickstart"),
         train_size=16,
+        validation_size=6,
         test_size=8,
         max_samples=3,
         epochs=2,
@@ -92,12 +93,18 @@ def test_quickstart_uses_a_cost_from_custom_grid(tmp_path: Path, capsys) -> None
 
     output = capsys.readouterr().out
     assert "λ=0.2" in output
-    assert (tmp_path / "quickstart" / "report.html").is_file()
+    root = tmp_path / "quickstart"
+    assert (root / "validation-report.html").is_file()
+    assert len((root / "validation.jsonl").read_text(encoding="utf-8").splitlines()) == 6
+    assert len((root / "test.jsonl").read_text(encoding="utf-8").splitlines()) == 8
+    benchmark = json.loads((root / "validation-benchmark.json").read_text(encoding="utf-8"))
+    assert benchmark["data"]["split"] == "validation"
 
 
 def test_plan_command_exports_and_displays_selection_source(tmp_path: Path, capsys) -> None:
     payload = {
         "schema_version": 2,
+        "data": {"split": "validation"},
         "max_samples": 4,
         "rows": [
             {

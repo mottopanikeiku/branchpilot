@@ -326,8 +326,10 @@ def _write_benchmark(
     manifest_capture = None
     manifest_snapshot = None
     if protocol is None:
-        if manifest_path is not None or split is not None or frozen_baseline_path is not None:
-            raise ValueError("manifest, split, and frozen baselines require a frozen protocol")
+        if manifest_path is not None or frozen_baseline_path is not None:
+            raise ValueError("manifest and frozen baselines require a frozen protocol")
+        if split not in {None, "validation", "test"}:
+            raise ValueError("split must be validation or test")
         frozen_baselines = None
         selection_snapshot = None
         selection_payload = None
@@ -944,11 +946,25 @@ def command_quickstart(args: argparse.Namespace) -> None:
     TrainConfig, train_policy = _training_api()
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
-    train_path, test_path = output / "train.jsonl", output / "test.jsonl"
-    policy_path, benchmark_path = output / "policy.safetensors", output / "benchmark.json"
+    train_path = output / "train.jsonl"
+    validation_path = output / "validation.jsonl"
+    test_path = output / "test.jsonl"
+    policy_path = output / "policy.safetensors"
+    benchmark_path = output / "validation-benchmark.json"
+    report_path = output / "validation-report.html"
+    validation_size = getattr(args, "validation_size", None)
+    if validation_size is None:
+        validation_size = args.test_size
     train = make_synthetic_rollouts(args.train_size, args.max_samples, args.seed)
-    test = make_synthetic_rollouts(args.test_size, args.max_samples, args.seed + 1)
+    validation = make_synthetic_rollouts(validation_size, args.max_samples, args.seed + 1)
+    test = make_synthetic_rollouts(args.test_size, args.max_samples, args.seed + 2)
+    for records in (train, validation, test):
+        validate_unique(records)
+    validate_disjoint(train, validation)
+    validate_disjoint(train, test)
+    validate_disjoint(validation, test)
     write_jsonl(train_path, train)
+    write_jsonl(validation_path, validation)
     write_jsonl(test_path, test)
     config = TrainConfig(
         max_samples=args.max_samples,
@@ -958,8 +974,14 @@ def command_quickstart(args: argparse.Namespace) -> None:
     )
     policy, training = train_policy(train, config)
     policy.save(policy_path, training)
-    payload = _write_benchmark(test_path, policy_path, benchmark_path, args.costs)
-    write_report(benchmark_path, output / "pareto.svg", output / "report.html")
+    payload = _write_benchmark(
+        validation_path,
+        policy_path,
+        benchmark_path,
+        args.costs,
+        split="validation",
+    )
+    write_report(benchmark_path, output / "validation-pareto.svg", report_path)
     _print_benchmark(payload)
     demo_args = argparse.Namespace(
         data=str(test_path),
@@ -968,7 +990,7 @@ def command_quickstart(args: argparse.Namespace) -> None:
         cost=args.costs[len(args.costs) // 2],
     )
     command_demo(demo_args)
-    console.print(f"Open [cyan]{output / 'report.html'}[/] for the standalone report.")
+    console.print(f"Open [cyan]{report_path}[/] for the standalone validation report.")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1090,6 +1112,11 @@ def build_parser() -> argparse.ArgumentParser:
     quickstart = subparsers.add_parser("quickstart", help="run the complete zero-GPU pipeline")
     quickstart.add_argument("--output-dir", default="artifacts/quickstart")
     quickstart.add_argument("--train-size", type=int, default=384)
+    quickstart.add_argument(
+        "--validation-size",
+        type=int,
+        help="validation trajectories; defaults to --test-size",
+    )
     quickstart.add_argument("--test-size", type=int, default=192)
     quickstart.add_argument("--max-samples", type=int, default=8)
     quickstart.add_argument("--epochs", type=int, default=60)

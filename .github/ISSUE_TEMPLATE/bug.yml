@@ -11,7 +11,7 @@ body:
     attributes:
       label: "BranchPilot version"
       description: "Give the exact release, commit SHA, or image digest."
-      placeholder: "v1.2.3, commit SHA, or sha256:..."
+      placeholder: "v0.3.0, commit SHA, or sha256:..."
     validations:
       required: true
   - type: dropdown
@@ -20,10 +20,9 @@ body:
       label: "Installation path"
       description: "How was this copy installed?"
       options:
-        - "PyPI"
-        - "pipx"
         - "Source checkout"
-        - "Container image"
+        - "GitHub release wheel"
+        - "GitHub release source distribution"
         - "Other"
     validations:
       required: true
@@ -32,7 +31,7 @@ body:
     attributes:
       label: "Installation details"
       description: "Include the relevant package source, command, commit, image, or other detail."
-      placeholder: "pipx install branchpilot; source commit ..."
+      placeholder: "uv sync from commit ...; GitHub release asset URL ..."
     validations:
       required: true
   - type: input

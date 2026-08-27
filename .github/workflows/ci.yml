@@ -35,15 +35,16 @@ jobs:
       - name: Test its-hub integration
         if: matrix.python == '3.14'
         run: uv run --extra its-hub pytest tests/test_its_hub_integration.py
-      - name: Verify canonical evidence checksums
+      - name: Verify evidence checksums
         if: matrix.python == '3.14'
-        run: (cd benchmarks && sha256sum -c checksums-v2.txt)
+        run: (cd benchmarks && sha256sum -c checksums-v2.txt && sha256sum -c checksums-v3-development.txt)
       - name: Smoke test CLI
         if: matrix.python == '3.14'
         run: >-
           uv run branchpilot quickstart
           --output-dir artifacts/ci
           --train-size 64
+          --validation-size 32
           --test-size 32
           --epochs 8
       - name: Import pinned Modal application
