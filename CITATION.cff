@@ -4,7 +4,7 @@ title: BranchPilot
 type: software
 authors:
   - name: mottopanikeiku
-version: 0.2.0
+version: 0.3.0
 license: MIT
 repository-code: "https://github.com/mottopanikeiku/branchpilot"
 url: "https://mottopanikeiku.github.io/branchpilot/"

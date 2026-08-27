@@ -4,13 +4,20 @@ build-backend = "hatchling.build"
 
 [project]
 name = "branchpilot"
-version = "0.2.0"
-description = "Budget-conditioned offline RL for adaptive LLM inference-time compute"
+version = "0.3.0"
+description = "Adaptive inference control for per-prompt LLM sampling"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "mottopanikeiku" }]
-keywords = ["reinforcement-learning", "llm-inference", "test-time-compute", "optimal-stopping"]
+keywords = [
+  "adaptive-inference",
+  "llm-inference",
+  "llm-serving",
+  "optimal-stopping",
+  "self-consistency",
+  "test-time-compute",
+]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
@@ -32,26 +39,47 @@ train = [
   "torch>=2.6,<3",
 ]
 dev = [
+  "fastapi==0.141.1",
   "hatchling==1.32.0",
+  "httpx==0.28.1",
+  "httpx2==2.12.0",
+  "openai==2.54.0",
+  "pydantic==2.13.4",
   "pytest>=8.2,<9",
   "ruff>=0.6,<1",
+  "starlette==1.6.0",
   "torch>=2.6,<3",
+  "uvicorn==0.52.4",
 ]
 modal = [
   "modal>=1.5,<2",
 ]
+gateway = [
+  "fastapi==0.141.1",
+  "httpx==0.28.1",
+  "openai==2.54.0",
+  "pydantic==2.13.4",
+  "starlette==1.6.0",
+  "uvicorn==0.52.4",
+]
+its-hub = [
+  "its_hub==1.2.0; python_version >= '3.11'",
+]
 openai = [
-  "openai>=2,<3",
+  "openai==2.54.0",
 ]
 
 [project.urls]
 Homepage = "https://github.com/mottopanikeiku/branchpilot"
 Repository = "https://github.com/mottopanikeiku/branchpilot"
 Issues = "https://github.com/mottopanikeiku/branchpilot/issues"
-Benchmark = "https://mottopanikeiku.github.io/branchpilot/"
+Benchmark = "https://mottopanikeiku.github.io/branchpilot/evidence/v0.2/"
+Documentation = "https://mottopanikeiku.github.io/branchpilot/"
+Evidence = "https://mottopanikeiku.github.io/branchpilot/evidence/v0.2/"
 
 [project.scripts]
 branchpilot = "branchpilot.cli:main"
+branchpilot-gateway = "branchpilot.gateway_entry:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/branchpilot"]

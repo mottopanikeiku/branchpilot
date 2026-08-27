@@ -32,6 +32,9 @@ jobs:
         run: uv run ruff format --check .
       - name: Test
         run: uv run pytest tests
+      - name: Test its-hub integration
+        if: matrix.python == '3.14'
+        run: uv run --extra its-hub pytest tests/test_its_hub_integration.py
       - name: Verify canonical evidence checksums
         if: matrix.python == '3.14'
         run: (cd benchmarks && sha256sum -c checksums-v2.txt)
@@ -68,3 +71,4 @@ jobs:
         run: |
           .venv-runtime/bin/python -c "import branchpilot; from importlib.util import find_spec; assert find_spec('torch') is None"
           .venv-runtime/bin/branchpilot --help
+          .venv-runtime/bin/branchpilot-gateway --help
