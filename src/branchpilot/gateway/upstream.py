@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -9,20 +11,26 @@ from typing import Any
 
 import httpx
 import openai
-from openai.types.chat import ChatCompletion
 
 from branchpilot.gateway.config import UpstreamConfig
+from branchpilot.gateway.providers import (
+    CANONICAL_API_KEY,
+    CANONICAL_REQUEST_ID,
+    COMPLETION_DETAIL_FIELDS,
+    FINISH_REASONS,
+    PROMPT_DETAIL_FIELDS,
+    CanonicalResponse,
+    ProviderRequestError,
+    ProviderResponseError,
+    resolve_adapter,
+)
 from branchpilot.schema import Sample
 
 _MISSING = object()
-_FINISH_REASONS = frozenset({"stop", "length", "tool_calls", "content_filter", "function_call"})
-_PROMPT_DETAIL_FIELDS = ("audio_tokens", "cached_tokens", "cache_write_tokens")
-_COMPLETION_DETAIL_FIELDS = (
-    "accepted_prediction_tokens",
-    "audio_tokens",
-    "reasoning_tokens",
-    "rejected_prediction_tokens",
-)
+_LOGGER = logging.getLogger("branchpilot.gateway.upstream")
+_FINISH_REASONS = FINISH_REASONS
+_PROMPT_DETAIL_FIELDS = PROMPT_DETAIL_FIELDS
+_COMPLETION_DETAIL_FIELDS = COMPLETION_DETAIL_FIELDS
 
 
 class GatewayError(Exception):
@@ -251,6 +259,37 @@ def parse_chat_completion(
     )
 
 
+def _sample_from_canonical(
+    canonical: CanonicalResponse,
+    extractor: Callable[[str], str | None],
+) -> UpstreamSample:
+    """Re-enter the audited parser with the adapter's normalized, single-choice response."""
+    return parse_chat_completion(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": canonical.content,
+                        "refusal": canonical.refusal,
+                    },
+                    "finish_reason": canonical.finish_reason,
+                    "logprobs": canonical.logprobs,
+                }
+            ],
+            "usage": {
+                "prompt_tokens": canonical.prompt_tokens,
+                "completion_tokens": canonical.completion_tokens,
+                "total_tokens": canonical.total_tokens,
+                "prompt_tokens_details": canonical.prompt_tokens_details,
+                "completion_tokens_details": canonical.completion_tokens_details,
+            },
+            "_request_id": canonical.upstream_request_id,
+        },
+        extractor,
+    )
+
+
 def _retry_after(response: Any) -> str | None:
     headers = getattr(response, "headers", None)
     if headers is None:
@@ -337,6 +376,19 @@ def _declared_length_exceeds(value: str, maximum: int) -> bool:
     return len(normalized) > len(limit) or (len(normalized) == len(limit) and normalized > limit)
 
 
+def _reject_json_constant(value: str) -> Any:
+    raise ValueError(f"non-finite JSON number {value!r} is not permitted")
+
+
+def _strict_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate JSON object key {key!r}")
+        value[key] = item
+    return value
+
+
 class OpenAIUpstream:
     """One long-lived, non-retrying upstream client with bounded admission and responses."""
 
@@ -350,6 +402,12 @@ class OpenAIUpstream:
     ) -> None:
         if client is not None and transport is not None:
             raise ValueError("client and transport cannot both be provided")
+        if client is not None and config.provider != "openai":
+            raise ValueError(
+                f"an injected OpenAI SDK client cannot serve provider {config.provider!r}; "
+                "fix: set upstreams.<name>.provider to 'openai' or drop the injected client"
+            )
+        self._adapter = resolve_adapter(config.provider)
         self.config = config
         self.queue_timeout_s = queue_timeout_s
         self._semaphore = asyncio.Semaphore(config.max_connections)
@@ -381,19 +439,38 @@ class OpenAIUpstream:
         *,
         public_request_id: str,
         sample_index: int,
-    ) -> ChatCompletion:
+    ) -> CanonicalResponse:
         assert self._http_client is not None
-        headers = {
-            "Authorization": f"Bearer {self.config.api_key}",
-            "Accept": "application/json",
-            "Accept-Encoding": "identity",
-            "Content-Type": "application/json",
-            "X-Request-ID": f"{public_request_id}:{sample_index}",
-        }
-        url = f"{self.config.base_url}/chat/completions"
+        try:
+            request = self._adapter.build_request(
+                {
+                    **payload,
+                    CANONICAL_API_KEY: self.config.api_key,
+                    CANONICAL_REQUEST_ID: f"{public_request_id}:{sample_index}",
+                }
+            )
+        except ProviderRequestError as exc:
+            # The adapter's message names the provider and operator config paths, which a
+            # client must never learn. Keep the actionable text server-side only.
+            _LOGGER.warning(
+                "upstream_request_unsupported",
+                extra={
+                    "request_id": public_request_id,
+                    "upstream": self.config.name,
+                    "detail": str(exc),
+                },
+            )
+            raise GatewayError(
+                400,
+                "invalid_request_error",
+                "upstream_unsupported_request",
+                "The request is not supported by the requested model.",
+            ) from exc
+        headers = dict(request.headers)
+        url = f"{self.config.base_url}{request.path}"
         try:
             async with self._http_client.stream(
-                "POST", url, headers=headers, json=payload
+                "POST", url, headers=headers, json=dict(request.payload)
             ) as response:
                 if response.status_code < 200 or response.status_code >= 300:
                     raise _map_http_response(response)
@@ -425,8 +502,18 @@ class OpenAIUpstream:
             raise _map_openai_error(exc) from exc
 
         try:
-            return ChatCompletion.model_validate_json(encoded)
-        except (TypeError, ValueError) as exc:
+            decoded = json.loads(
+                encoded,
+                object_pairs_hook=_strict_json_object,
+                parse_constant=_reject_json_constant,
+            )
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise _invalid_response() from exc
+        if not isinstance(decoded, Mapping):
+            raise _invalid_response()
+        try:
+            return self._adapter.parse_response(decoded)
+        except ProviderResponseError as exc:
             raise _invalid_response() from exc
 
     async def sample(
@@ -457,11 +544,12 @@ class OpenAIUpstream:
             if self._client is None:
                 direct_payload = dict(payload)
                 direct_payload.update(self.config.fixed_extra_body)
-                response = await self._bounded_response(
+                canonical = await self._bounded_response(
                     direct_payload,
                     public_request_id=public_request_id,
                     sample_index=sample_index,
                 )
+                return _sample_from_canonical(canonical, extractor)
             else:
                 kwargs = dict(payload)
                 kwargs["extra_headers"] = {"X-Request-ID": f"{public_request_id}:{sample_index}"}

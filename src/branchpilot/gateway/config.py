@@ -27,6 +27,13 @@ from pydantic import (
 )
 
 from branchpilot.deployment import load_deployment_plan
+from branchpilot.gateway.providers import (
+    CANONICAL_API_KEY,
+    CANONICAL_REQUEST_ID,
+    DEFAULT_PROVIDER,
+    UnknownProviderError,
+    resolve_adapter,
+)
 from branchpilot.gateway.schemas import MAX_COMPLETION_TOKENS, ChatCompletionRequest
 
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -48,6 +55,7 @@ _FORBIDDEN_FEATURE_FIELDS = frozenset(
 _FIXED_EXTRA_RESERVED = (
     _RESERVED_OPTIONS
     | _FORBIDDEN_FEATURE_FIELDS
+    | frozenset({CANONICAL_API_KEY, CANONICAL_REQUEST_ID})
     | frozenset(
         {
             "branchpilot",
@@ -98,6 +106,7 @@ class _ConfigModel(BaseModel):
 class UpstreamFileConfig(_ConfigModel):
     base_url: StrictStr = Field(min_length=1, max_length=2048)
     api_key_env: StrictStr = Field(min_length=1, max_length=128, pattern=_ENV_NAME.pattern)
+    provider: StrictStr = Field(default=DEFAULT_PROVIDER, min_length=1, max_length=64)
     connect_timeout_s: StrictFloat | StrictInt = Field(default=5.0, gt=0, le=3600)
     read_timeout_s: StrictFloat | StrictInt = Field(default=60.0, gt=0, le=3600)
     write_timeout_s: StrictFloat | StrictInt = Field(default=10.0, gt=0, le=3600)
@@ -127,6 +136,15 @@ class UpstreamFileConfig(_ConfigModel):
     def finite_timeout(cls, value: float | int) -> float | int:
         if not math.isfinite(float(value)):
             raise ValueError("timeout must be finite")
+        return value
+
+    @field_validator("provider")
+    @classmethod
+    def registered_provider(cls, value: str) -> str:
+        try:
+            resolve_adapter(value)
+        except UnknownProviderError as exc:
+            raise ValueError(str(exc)) from exc
         return value
 
     @field_validator("fixed_extra_body")
@@ -221,8 +239,13 @@ class UpstreamConfig:
     max_connections: int = 32
     max_response_bytes: int = _DEFAULT_MAX_UPSTREAM_RESPONSE_BYTES
     fixed_extra_body: Mapping[str, Any] = field(default_factory=dict)
+    provider: str = DEFAULT_PROVIDER
 
     def __post_init__(self) -> None:
+        try:
+            resolve_adapter(self.provider)
+        except UnknownProviderError as exc:
+            raise ConfigError(str(exc)) from exc
         object.__setattr__(
             self,
             "fixed_extra_body",
@@ -355,6 +378,7 @@ def load_gateway_config(
             max_connections=item.max_connections,
             fixed_extra_body=dict(item.fixed_extra_body),
             max_response_bytes=item.max_response_bytes,
+            provider=item.provider,
         )
 
     models: dict[str, ModelRoute] = {}

@@ -148,6 +148,7 @@ onto the operator. Column 3 is our obligation.
 | Savings number cannot be defended | disclaimer | counterfactual definition recorded per request; response-identical levers reported separately from quality-affecting ones; ranges, never point estimates | `M8-T01` |
 | Ambiguous log format silently misparsed | best-effort guess | detection **refuses** and names the candidates; malformed records raise with an index; parsed/skipped counts always reported | `M1-T01` |
 | Gateway dies and loses in-flight batch work | "at-least-once, sorry" | durable batch state; restart resumes; no silent loss | `M5-T01` |
+| Helpful error text leaks the upstream identity to an untrusted caller | put the actionable message in the HTTP body | **operator-facing and client-facing errors are different surfaces.** Rich `fix:` text goes to logs keyed by request id; the HTTP body carries a constant. Caught in Batch 1: an adapter refusal was returning `provider 'anthropic' does not support ... models.<alias>.options` to the client | `upstream.py` boundary, regression-tested |
 
 ### 3.1 Gating rule
 
@@ -166,7 +167,7 @@ Testable, not vibes. `S-T05` turns each into an automated check where possible.
 | U1 | **Zero decisions to first value.** `branchpilot audit logs.jsonl` with no flags produces a full report: format auto-detected, prices resolved, opportunities ranked | CLI test with a bare invocation on each supported format |
 | U2 | **One line to adopt.** Change `base_url`, or change one import via `branchpilot.dropin`. Nothing else | drop-in test asserting the shim adds nothing but base URL and headers |
 | U3 | **Under 60 seconds to a dollar figure** from a cold `pip install` | timed test on a 10k-record fixture |
-| U4 | **Every error names the fix.** Format: what failed, which file/field, the exact change | test asserting every raised public error message contains a `fix:` clause |
+| U4 | **Every OPERATOR-facing error names the fix.** Format: what failed, which file/field, the exact change. Scope is deliberate: CLI output, config-load failures, library exceptions, and logs. It does **NOT** extend to gateway HTTP response bodies — those go to an untrusted caller and must stay constant and sanitized, with the actionable detail logged server-side keyed by request id. Batch 1 shipped this leak by reading U4 too broadly; see the last row of Part 3 | test asserting every operator-facing error contains `fix:`, plus `S-T03` asserting HTTP bodies never carry provider identity, config paths, or `fix:` text |
 | U5 | **No account, no key, no network.** Audit, qualify, and report are fully offline | test asserting zero sockets opened during an audit |
 | U6 | **Safe defaults, always.** Default config for every lever is the conservative one | config test snapshotting defaults against an approved table |
 | U7 | **Explain any decision.** Every request's decision trace is retrievable and human-readable | the existing flight recorder, extended to all six levers |
@@ -1085,7 +1086,8 @@ retrofit.
 - Commit subject: `type: imperative summary` (`feat|fix|perf|docs|test|ci|chore|bench`).
 - Money is `decimal.Decimal` end to end; float in a cost path is a review rejection.
 - Ingest and ledger records never contain prompt or completion text.
-- Every public error message contains a `fix:` clause.
+- Every operator-facing error message contains a `fix:` clause. Gateway HTTP bodies are the
+  exception: constant and sanitized, with the detail logged server-side (see U4 and Part 3).
 - Response payload byte-compatibility is a test, not an aspiration.
 - Protocol commits land before result commits for any `benchmarks/` bundle.
 
@@ -1098,6 +1100,7 @@ retrofit.
 - A new disclaimer where a guard is possible.
 - A lever marked serve-eligible with an open Part 3 row.
 - Any change to response bytes on a cache, routing, or arbitrage path.
-- An error message without a `fix:` clause.
+- An operator-facing error message without a `fix:` clause, or a gateway HTTP body that carries
+  provider identity, operator config paths, or `fix:` text.
 - A required flag or config edit on the path to first value.
 - A new hard dependency on Redis, Postgres, or Kubernetes for the default path.
