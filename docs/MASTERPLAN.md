@@ -47,15 +47,18 @@ every other lever for reducing LLM compute, it is **last**:
 
 | # | Lever | Reported impact | Traffic it applies to |
 |---|---|---|---|
-| 1 | Prefix/prompt cache exploitation | cached reads bill at ~10% of standard input on newest flagships (90% off); OpenAI auto-caching ~50%. One documented agent: $720/mo → $72/mo via three `cache_control` markers | almost any workload with a stable system prompt or shared context |
+| 1 | Prefix/prompt cache exploitation | cached reads bill at ~10% of standard input on current flagships (90% off); OpenAI auto-caching discount is provider-published | almost any workload with a stable system prompt or shared context |
 | 2 | Batch/async lane | flat 50% off input **and** output on both OpenAI and Anthropic; stacks with caching to ~95% off the repeated portion | anything tolerating ≤24h latency |
 | 3 | Response cache (exact + semantic) | production semantic hit rates **20–45%** (not the 90% marketing figure); reported reduction 20–73% | repetitive Q&A, support, RAG |
-| 4 | Model tier routing | ~20–40% commonly reported in week one | any traffic with easy/hard variance |
+| 4 | Model tier routing | **no sourced production range exists.** RouteLLM (primary, published) reports ">2x cost reduction in certain cases"; the widely repeated "85% reduction / 95% of GPT-4 performance" is benchmark-specific and must not be cited. Magnitude depends entirely on the easy/hard mix in your traffic and must be measured | any traffic with easy/hard variance |
 | 5 | Provider arbitrage on open weights | large price dispersion for identical weights | open-weight traffic |
 | 6 | **Adaptive sampling (our headline)** | a fraction of a *multi-sample* budget | only workloads already drawing k>1 |
 
-All figures are **market-reported, not our claims**, and live with sources in
-`docs/internal/market-notes.md` (`G1-T01`).
+All figures are **market-reported, not our claims.** Every one has a sourced row with an access
+date and a VERIFY-BY date in `docs/internal/market-notes.md`. Anything absent from that file may
+not be cited anywhere. Figures previously carried in this plan that did NOT survive verification
+are recorded in its "Unverified / omitted" section — including a widely circulated
+$720/mo → $72/mo prompt-caching anecdote whose source returned HTTP 403 and is therefore dropped.
 
 **Conclusion: we built lever 6, marketed it as the product, and required a GPU plus pre-generated
 trajectories to see any of it.** Levers 1–4 are larger, apply to vastly more traffic, need no
@@ -78,16 +81,25 @@ Every row is a reason someone closes the tab.
 
 ### 1.4 Category context
 
-| Player | Position | Gap |
-|---|---|---|
-| **LiteLLM** ~40k stars, MIT, 100+ providers, 1,300+ contributors `[VERIFY]` | the default OSS gateway; spend tracking, virtual keys, Redis cache | tracks spend; computes no counterfactual; footguns documented rather than closed |
-| **Portkey** Apache 2.0 since Mar 2026 `[VERIFY]` | most feature-complete OSS gateway | feature breadth over default safety |
-| **Helicone** maintenance mode after Mintlify acquisition, Mar 2026 `[VERIFY]` | observability-first OSS gateway, development ended | an actively-maintained slot is open |
-| **Cloudflare AI Gateway / Kong** | edge and API-platform incumbents | not developer-first, not self-hostable the same way |
+| Player | Stars (2026-08-28) | Position | Exploitable gap |
+|---|---|---|---|
+| **LiteLLM** | **57,446** | the default OSS gateway. MIT except a separately licensed `enterprise/`; 100+ providers; ~1,645 contributor pages; shipped a release the day we measured; semantic cache across Qdrant/Redis/Valkey; working virtual keys and per-key/team budgets | tells you what you **spent**, never what you **would have** spent. And its own cost-tracking docs *warn* that end users can self-declare `user` to dodge spend attribution — a footgun disclaimed to the operator rather than closed in code. That single line is our whole thesis, written by the incumbent |
+| **Portkey Gateway** | **12,842** | **MIT, not Apache-2.0** — the relicense claim in earlier drafts was contradicted by the source. Broadest catalogue (1,600+ LLMs claimed); real semantic-cache engineering (Milvus/Pinecone, configurable threshold, namespaces); guardrails we lack entirely | OSS repo is **stale**: last push 2026-05-25, last release 2026-01-12. Semantic caching is Enterprise-gated on the hosted product |
+| **Helicone** | **6,106** | **maintenance mode confirmed** since the Mintlify acquisition on 2026-03-03 — security, new models, and bug fixes only. Proved the market: 14.2T tokens and ~16,000 organisations in three years off a one-line integration | the actively-maintained OSS-observability slot is genuinely open, and that adoption curve came from one-line integration — which is our U2 |
+| **Kong AI Gateway** | **44,052** (whole gateway) | Apache-2.0 core, AI plugins tiered; semantic routing and semantic cache | semantic cache requires `ai_gateway_enterprise`; not developer-first |
+| **Cloudflare AI Gateway** | n/a (closed) | edge incumbent, real analytics | **exact-match cache only**, semantic search documented as planned; not self-hostable |
+| **OpenRouter** | n/a (closed) | 103 providers / 380 models; sticky routing to keep upstream prompt caches warm | not self-hostable; no counterfactual |
 
-Reality check on reach: ~40k is the infra-gateway ceiling. Repos clearing six figures in this era
-(open-webui, dify, comfyui, ollama, n8n) all ship a **visual end-user surface**. Infra alone does
-not get there. That is an argument for the cockpit (`M9-*`), not for marketing louder.
+**Counterfactual savings measurement: none of the six.** That is the wedge, verified rather than assumed.
+
+Reality check on reach, stated honestly: in a hand-picked sample of six repositories above 100k
+stars (n8n 202,653; ollama 179,598; dify 153,710; open-webui 150,180; langchain 145,162;
+ComfyUI 130,349), five ship a surface a non-developer can open; the exception is the category's
+most ubiquitous dependency. The infra-gateway ceiling in that sample is LiteLLM at 57,446 —
+roughly one third of the app tier. This is **correlational on a selection-biased sample of six**
+chosen because they were already known to exceed 100k. It is an argument for building the cockpit
+(`M9-*`); it is **not** evidence that a cockpit produces 100k stars, and it must never be cited
+as such.
 
 ---
 
