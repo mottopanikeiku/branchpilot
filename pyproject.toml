@@ -68,6 +68,9 @@ its-hub = [
 openai = [
   "openai==2.54.0",
 ]
+postgres = [
+  "asyncpg==0.31.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/mottopanikeiku/branchpilot"
