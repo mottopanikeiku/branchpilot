@@ -1,0 +1,41 @@
+# A representative LiteLLM proxy config: several deployments across two upstreams, every
+# credential held as an environment reference, router settings, and a handful of constructs
+# BranchPilot has no equivalent for.
+model_list:
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_base: https://api.openai.com/v1
+      api_key: os.environ/OPENAI_API_KEY
+      max_tokens: 2048
+      rpm: 500
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_base: https://api.openai.com/v1
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: claude-sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5
+      api_base: https://api.anthropic.com/v1
+      api_key: os.environ/ANTHROPIC_API_KEY
+      max_tokens: 4096
+    model_info:
+      mode: chat
+
+router_settings:
+  timeout: 120
+  max_parallel_requests: 16
+  num_retries: 3
+  cooldown_time: 30
+  routing_strategy: latency-based-routing
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  max_budget: 500
+  budget_duration: 30d
+
+litellm_settings:
+  drop_params: true
+  success_callback:
+    - langfuse
