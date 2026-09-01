@@ -1,0 +1,50 @@
+{
+  "provider": "gemini",
+  "lever_path": "single_sample_passthrough",
+  "description": "One Gemini generateContent response. Thought tokens are billed as output, so they join completion_tokens and surface as reasoning_tokens; cachedContentTokenCount is already inside promptTokenCount.",
+  "upstream_responses": [
+    {
+      "responseId": "resp-upstream-0001",
+      "modelVersion": "private/model",
+      "candidates": [
+        {
+          "content": {"role": "model", "parts": [{"text": "42"}]},
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 12,
+        "candidatesTokenCount": 3,
+        "cachedContentTokenCount": 9,
+        "thoughtsTokenCount": 2,
+        "totalTokenCount": 17
+      }
+    }
+  ],
+  "expected_headers": {
+    "x-branchpilot-samples": "1",
+    "x-branchpilot-strategy": "fixed",
+    "x-branchpilot-selection": "majority"
+  },
+  "expected_response": {
+    "id": "chatcmpl-bp-<normalized>",
+    "object": "chat.completion",
+    "created": 0,
+    "model": "public-math",
+    "choices": [
+      {
+        "index": 0,
+        "message": {"role": "assistant", "content": "42", "refusal": null},
+        "logprobs": null,
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 12,
+      "completion_tokens": 5,
+      "total_tokens": 17,
+      "prompt_tokens_details": {"cached_tokens": 9},
+      "completion_tokens_details": {"reasoning_tokens": 2}
+    }
+  }
+}

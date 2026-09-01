@@ -1,0 +1,65 @@
+{
+  "provider": "bedrock",
+  "lever_path": "multi_sample_adaptive",
+  "description": "Three Bedrock Converse responses; the majority answer '42' first appears in sample 2, so the client sees that sample's message while usage aggregates all three.",
+  "upstream_responses": [
+    {
+      "output": {"message": {"role": "assistant", "content": [{"text": "7"}]}},
+      "stopReason": "end_turn",
+      "usage": {
+        "inputTokens": 14,
+        "outputTokens": 2,
+        "totalTokens": 16,
+        "cacheReadInputTokens": 8,
+        "cacheWriteInputTokens": 2
+      }
+    },
+    {
+      "output": {"message": {"role": "assistant", "content": [{"text": "42"}]}},
+      "stopReason": "end_turn",
+      "usage": {
+        "inputTokens": 14,
+        "outputTokens": 3,
+        "totalTokens": 17,
+        "cacheReadInputTokens": 8,
+        "cacheWriteInputTokens": 2
+      }
+    },
+    {
+      "output": {"message": {"role": "assistant", "content": [{"text": "42"}]}},
+      "stopReason": "end_turn",
+      "usage": {
+        "inputTokens": 14,
+        "outputTokens": 4,
+        "totalTokens": 18,
+        "cacheReadInputTokens": 8,
+        "cacheWriteInputTokens": 2
+      }
+    }
+  ],
+  "expected_headers": {
+    "x-branchpilot-samples": "3",
+    "x-branchpilot-strategy": "fixed",
+    "x-branchpilot-selection": "majority"
+  },
+  "expected_response": {
+    "id": "chatcmpl-bp-<normalized>",
+    "object": "chat.completion",
+    "created": 0,
+    "model": "public-math",
+    "choices": [
+      {
+        "index": 0,
+        "message": {"role": "assistant", "content": "42", "refusal": null},
+        "logprobs": null,
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 42,
+      "completion_tokens": 9,
+      "total_tokens": 51,
+      "prompt_tokens_details": {"cache_write_tokens": 6, "cached_tokens": 24}
+    }
+  }
+}

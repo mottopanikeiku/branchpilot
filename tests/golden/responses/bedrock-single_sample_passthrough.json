@@ -1,0 +1,43 @@
+{
+  "provider": "bedrock",
+  "lever_path": "single_sample_passthrough",
+  "description": "One Bedrock Converse response using the convention where cache tokens are already inside inputTokens (totalTokens == inputTokens + outputTokens).",
+  "upstream_responses": [
+    {
+      "output": {"message": {"role": "assistant", "content": [{"text": "42"}]}},
+      "stopReason": "end_turn",
+      "usage": {
+        "inputTokens": 14,
+        "outputTokens": 3,
+        "totalTokens": 17,
+        "cacheReadInputTokens": 8,
+        "cacheWriteInputTokens": 2
+      }
+    }
+  ],
+  "expected_headers": {
+    "x-branchpilot-samples": "1",
+    "x-branchpilot-strategy": "fixed",
+    "x-branchpilot-selection": "majority"
+  },
+  "expected_response": {
+    "id": "chatcmpl-bp-<normalized>",
+    "object": "chat.completion",
+    "created": 0,
+    "model": "public-math",
+    "choices": [
+      {
+        "index": 0,
+        "message": {"role": "assistant", "content": "42", "refusal": null},
+        "logprobs": null,
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 14,
+      "completion_tokens": 3,
+      "total_tokens": 17,
+      "prompt_tokens_details": {"cache_write_tokens": 2, "cached_tokens": 8}
+    }
+  }
+}

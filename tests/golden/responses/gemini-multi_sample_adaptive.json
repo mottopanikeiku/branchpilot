@@ -1,0 +1,84 @@
+{
+  "provider": "gemini",
+  "lever_path": "multi_sample_adaptive",
+  "description": "Three Gemini generateContent responses; the majority answer '42' first appears in sample 2, so the client sees that sample's message while usage aggregates all three.",
+  "upstream_responses": [
+    {
+      "responseId": "resp-upstream-0001",
+      "modelVersion": "private/model",
+      "candidates": [
+        {
+          "content": {"role": "model", "parts": [{"text": "7"}]},
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 12,
+        "candidatesTokenCount": 2,
+        "cachedContentTokenCount": 9,
+        "thoughtsTokenCount": 2,
+        "totalTokenCount": 16
+      }
+    },
+    {
+      "responseId": "resp-upstream-0002",
+      "modelVersion": "private/model",
+      "candidates": [
+        {
+          "content": {"role": "model", "parts": [{"text": "42"}]},
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 12,
+        "candidatesTokenCount": 3,
+        "cachedContentTokenCount": 9,
+        "thoughtsTokenCount": 2,
+        "totalTokenCount": 17
+      }
+    },
+    {
+      "responseId": "resp-upstream-0003",
+      "modelVersion": "private/model",
+      "candidates": [
+        {
+          "content": {"role": "model", "parts": [{"text": "42"}]},
+          "finishReason": "STOP"
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 12,
+        "candidatesTokenCount": 4,
+        "cachedContentTokenCount": 9,
+        "thoughtsTokenCount": 2,
+        "totalTokenCount": 18
+      }
+    }
+  ],
+  "expected_headers": {
+    "x-branchpilot-samples": "3",
+    "x-branchpilot-strategy": "fixed",
+    "x-branchpilot-selection": "majority"
+  },
+  "expected_response": {
+    "id": "chatcmpl-bp-<normalized>",
+    "object": "chat.completion",
+    "created": 0,
+    "model": "public-math",
+    "choices": [
+      {
+        "index": 0,
+        "message": {"role": "assistant", "content": "42", "refusal": null},
+        "logprobs": null,
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 36,
+      "completion_tokens": 15,
+      "total_tokens": 51,
+      "prompt_tokens_details": {"cached_tokens": 27},
+      "completion_tokens_details": {"reasoning_tokens": 6}
+    }
+  }
+}

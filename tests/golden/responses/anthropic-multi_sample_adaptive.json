@@ -1,0 +1,74 @@
+{
+  "provider": "anthropic",
+  "lever_path": "multi_sample_adaptive",
+  "description": "Three Anthropic Messages responses; the majority answer '42' first appears in sample 2, so the client sees that sample's message while usage aggregates all three.",
+  "upstream_responses": [
+    {
+      "id": "msg_upstream_0001",
+      "type": "message",
+      "role": "assistant",
+      "model": "private/model",
+      "content": [{"type": "text", "text": "7"}],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 2,
+        "cache_read_input_tokens": 8,
+        "cache_creation_input_tokens": 2
+      }
+    },
+    {
+      "id": "msg_upstream_0002",
+      "type": "message",
+      "role": "assistant",
+      "model": "private/model",
+      "content": [{"type": "text", "text": "42"}],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 3,
+        "cache_read_input_tokens": 8,
+        "cache_creation_input_tokens": 2
+      }
+    },
+    {
+      "id": "msg_upstream_0003",
+      "type": "message",
+      "role": "assistant",
+      "model": "private/model",
+      "content": [{"type": "text", "text": "42"}],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 8,
+        "cache_creation_input_tokens": 2
+      }
+    }
+  ],
+  "expected_headers": {
+    "x-branchpilot-samples": "3",
+    "x-branchpilot-strategy": "fixed",
+    "x-branchpilot-selection": "majority"
+  },
+  "expected_response": {
+    "id": "chatcmpl-bp-<normalized>",
+    "object": "chat.completion",
+    "created": 0,
+    "model": "public-math",
+    "choices": [
+      {
+        "index": 0,
+        "message": {"role": "assistant", "content": "42", "refusal": null},
+        "logprobs": null,
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 48,
+      "completion_tokens": 9,
+      "total_tokens": 57,
+      "prompt_tokens_details": {"cache_write_tokens": 6, "cached_tokens": 24}
+    }
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "provider": "openai",
+  "lever_path": "multi_sample_adaptive",
+  "description": "Three upstream samples; the majority answer '42' first appears in sample 2, so the client sees that sample's message while usage aggregates all three.",
+  "upstream_responses": [
+    {
+      "id": "chatcmpl-upstream-0001",
+      "object": "chat.completion",
+      "created": 1730000000,
+      "model": "private/model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {"role": "assistant", "content": "7", "refusal": null},
+          "logprobs": null,
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 11,
+        "completion_tokens": 2,
+        "total_tokens": 13,
+        "prompt_tokens_details": {"audio_tokens": 0, "cached_tokens": 8},
+        "completion_tokens_details": {"reasoning_tokens": 0}
+      }
+    },
+    {
+      "id": "chatcmpl-upstream-0002",
+      "object": "chat.completion",
+      "created": 1730000001,
+      "model": "private/model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {"role": "assistant", "content": "42", "refusal": null},
+          "logprobs": null,
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 11,
+        "completion_tokens": 3,
+        "total_tokens": 14,
+        "prompt_tokens_details": {"audio_tokens": 0, "cached_tokens": 8},
+        "completion_tokens_details": {"reasoning_tokens": 0}
+      }
+    },
+    {
+      "id": "chatcmpl-upstream-0003",
+      "object": "chat.completion",
+      "created": 1730000002,
+      "model": "private/model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {"role": "assistant", "content": "42", "refusal": null},
+          "logprobs": null,
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 11,
+        "completion_tokens": 4,
+        "total_tokens": 15,
+        "prompt_tokens_details": {"audio_tokens": 0, "cached_tokens": 8},
+        "completion_tokens_details": {"reasoning_tokens": 0}
+      }
+    }
+  ],
+  "expected_headers": {
+    "x-branchpilot-samples": "3",
+    "x-branchpilot-strategy": "fixed",
+    "x-branchpilot-selection": "majority"
+  },
+  "expected_response": {
+    "id": "chatcmpl-bp-<normalized>",
+    "object": "chat.completion",
+    "created": 0,
+    "model": "public-math",
+    "choices": [
+      {
+        "index": 0,
+        "message": {"role": "assistant", "content": "42", "refusal": null},
+        "logprobs": null,
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 33,
+      "completion_tokens": 9,
+      "total_tokens": 42,
+      "prompt_tokens_details": {"audio_tokens": 0, "cached_tokens": 24},
+      "completion_tokens_details": {"reasoning_tokens": 0}
+    }
+  }
+}
