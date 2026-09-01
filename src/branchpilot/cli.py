@@ -5,6 +5,7 @@ import json
 import math
 import os
 import random
+import shlex
 import tempfile
 from itertools import combinations
 from pathlib import Path
@@ -12,7 +13,30 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from branchpilot.artifacts import atomic_write_bytes, atomic_write_text, paths_alias
+from branchpilot.artifacts import atomic_write_bytes, atomic_write_text, paths_alias, sha256_file
+from branchpilot.audit.detectors import (
+    detect_opportunities,
+    price_records,
+    profile_workload,
+    spend_by_model,
+)
+from branchpilot.audit.render import (
+    NO_OPPORTUNITY,
+    TOP_OPPORTUNITIES,
+    format_amount,
+    format_money,
+    format_range,
+    next_action,
+    render_html,
+    scoped_levers,
+)
+from branchpilot.audit.result import AuditResult, PriceBookProvenance, sum_money
+from branchpilot.audit.risk import (
+    QUALITY_AFFECTING,
+    VALIDATION_COMMANDS,
+    VALIDATION_REQUIREMENTS,
+    headline,
+)
 from branchpilot.calibration import load_deployment_plan as load_calibrated_plan
 from branchpilot.deployment import load_deployment_plan as load_runtime_plan
 from branchpilot.evaluate import (
@@ -23,6 +47,14 @@ from branchpilot.evaluate import (
     pareto_frontier,
 )
 from branchpilot.features import FEATURE_NAMES
+from branchpilot.ingest import (
+    FORMAT_IDS,
+    AmbiguousFormatError,
+    IngestError,
+    MappingError,
+    UnknownFormatError,
+    read_requests,
+)
 from branchpilot.integrity import (
     profile_rollouts,
     validate_disjoint,
@@ -33,6 +65,14 @@ from branchpilot.policy import (
     COST_MODEL,
     TRAINING_ALGORITHM,
     BranchPilotPolicy,
+)
+from branchpilot.pricing import (
+    PACKAGED_PRICE_BOOK,
+    PriceBook,
+    PriceBookError,
+)
+from branchpilot.pricing import (
+    SCHEMA_VERSION as PRICE_BOOK_SCHEMA_VERSION,
 )
 from branchpilot.provenance import (
     FileSnapshot,
@@ -592,7 +632,7 @@ def command_split(args: argparse.Namespace) -> None:
     )
 
 
-def command_audit(args: argparse.Namespace) -> None:
+def command_integrity(args: argparse.Namespace) -> None:
     _assert_distinct_paths(
         data=args.data,
         comparison=args.compare,
@@ -634,6 +674,309 @@ def command_audit(args: argparse.Namespace) -> None:
             json.dumps(payload, indent=2, sort_keys=True) + "\n",
         )
         console.print(f"Wrote audit record to [cyan]{args.json_output}[/]")
+
+
+def _window(value: str) -> int:
+    try:
+        seconds = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "--window must be a whole number of seconds; fix: pass --window 3600, or omit it to "
+            "audit every record in the file"
+        ) from exc
+    if seconds <= 0:
+        raise argparse.ArgumentTypeError(
+            f"--window must be positive, not {seconds}; fix: pass --window 3600, or omit it to "
+            "audit every record in the file"
+        )
+    return seconds
+
+
+def _audit_mapping(path: str) -> dict:
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SystemExit(
+            f"cannot read the field mapping {path}: {exc.strerror}; "
+            "fix: pass --mapping FILE naming a readable JSON object"
+        ) from exc
+    try:
+        loaded = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"field mapping {path} is not valid JSON: {exc.msg} at line {exc.lineno}; "
+            "fix: pass --mapping FILE containing one JSON object of field paths"
+        ) from exc
+    if not isinstance(loaded, dict):
+        raise SystemExit(
+            f"field mapping {path} must be a JSON object, not "
+            f"{type(loaded).__name__}; fix: pass --mapping FILE containing an object such as "
+            '{"id": "trace_id", "model": "llm.model", ...}'
+        )
+    return loaded
+
+
+_FORMAT_FIX = (
+    "fix: pass --format FORMAT_ID naming this log's format; for --format generic-jsonl also "
+    "pass --mapping FILE, a JSON object giving a dotted path for each required field"
+)
+
+
+def _read_audit_log(path: str, format_id: str, mapping: dict | None):
+    try:
+        stream = read_requests(path, format=format_id, mapping=mapping)
+        records = list(stream)
+    except (AmbiguousFormatError, MappingError, UnknownFormatError) as exc:
+        raise SystemExit(f"{exc}\n{_FORMAT_FIX}") from exc
+    except IngestError as exc:
+        raise SystemExit(str(exc)) from exc
+    return records, stream.report(), stream.format
+
+
+def _audit_price_book(path: str | None) -> PriceBook:
+    try:
+        return PriceBook.load(path)
+    except PriceBookError as exc:
+        raise SystemExit(str(exc)) from exc
+
+
+def _audit_currency(book: PriceBook, priced, requested: str | None) -> str:
+    used = sorted({item.entry.currency for item in priced})
+    if len(used) > 1:
+        raise SystemExit(
+            f"the rate cards that priced this log quote {' and '.join(used)}; fix: audit one "
+            "currency at a time -- split the log by provider, or pass a --price-book FILE whose "
+            "entries all quote the same currency. No exchange rate is ever applied"
+        )
+    currency = used[0] if used else (requested or _sole_currency(book))
+    if requested is not None and requested != currency:
+        raise SystemExit(
+            f"--currency {requested} does not match the price book, which quotes {currency}; "
+            f"fix: pass --currency {currency}, or pass a --price-book FILE quoting {requested}. "
+            "No exchange rate is ever applied"
+        )
+    return currency
+
+
+def _sole_currency(book: PriceBook) -> str:
+    quoted = sorted({entry.currency for entry in book.entries})
+    return quoted[0] if len(quoted) == 1 else "USD"
+
+
+def _audit_fixes(workload) -> tuple[str, ...]:
+    fixes: list[str] = []
+    if workload.unpriced_records:
+        pairs = ", ".join(f"{provider}/{model}" for provider, model in workload.unpriced_pairs)
+        fixes.append(
+            f"{workload.unpriced_records} of {workload.records} record(s) use a model with no "
+            f"configured price ({pairs}) and are excluded from every figure; fix: add those "
+            "(provider, model) pairs to a price book file and pass --price-book FILE"
+        )
+    if workload.skipped:
+        reasons = ", ".join(
+            f"{reason}={count}" for reason, count in sorted(workload.skip_reasons.items())
+        )
+        fixes.append(
+            f"{workload.skipped} log line(s) carried no auditable chat request ({reasons}) and "
+            "were skipped; fix: export those calls with their message array and token counts if "
+            "they belong in the audit"
+        )
+    return tuple(fixes)
+
+
+def _audit_reproduction_command(args: argparse.Namespace, format_id: str, currency: str) -> str:
+    parts = ["branchpilot", "audit", shlex.quote(str(args.logs)), "--format", format_id]
+    if args.mapping:
+        parts += ["--mapping", shlex.quote(str(args.mapping))]
+    if args.price_book:
+        parts += ["--price-book", shlex.quote(str(args.price_book))]
+    if args.window is not None:
+        parts += ["--window", str(args.window)]
+    parts += ["--currency", currency]
+    if args.include_quality_affecting:
+        parts.append("--include-quality-affecting")
+    return " ".join(parts)
+
+
+def _print_audit_spend(result: AuditResult) -> None:
+    console.print("[bold]Observed spend[/]")
+    console.print(format_money(result.observed_spend, result.currency))
+    console.print(
+        f"across {result.workload.priced_records} priced request(s); "
+        "projection from observed tokens times configured prices"
+    )
+    console.print()
+    console.print("[bold]Spend by model[/]")
+    if not result.spend_by_model:
+        console.print("no record in this log could be priced")
+    else:
+        table = Table(header_style="bold cyan", box=None)
+        table.add_column("provider/model")
+        table.add_column("requests", justify="right")
+        table.add_column("tokens in/cached/out", justify="right")
+        table.add_column("spend", justify="right")
+        for row in result.spend_by_model:
+            table.add_row(
+                f"{row.provider}/{row.model}",
+                str(row.requests),
+                f"{row.prompt_tokens}/{row.cached_prompt_tokens}/{row.completion_tokens}",
+                format_money(row.spend, result.currency),
+            )
+        console.print(table)
+    console.print()
+
+
+def _print_audit_coverage(result: AuditResult) -> None:
+    workload = result.workload
+    console.print("[bold]Coverage[/]")
+    console.print(
+        f"priced {workload.priced_records} of {workload.records} record(s) "
+        f"({workload.coverage_percent}%); unpriced {workload.unpriced_records}"
+    )
+    for provider, model in workload.unpriced_pairs:
+        console.print(f"unpriced model {provider}/{model}")
+    for fix in result.fixes:
+        console.print(fix)
+    console.print()
+
+
+def _print_audit_opportunities(result: AuditResult, *, include_quality_affecting: bool) -> None:
+    ranked = result.ranked(include_quality_affecting=include_quality_affecting)
+    console.print("[bold]Top opportunities[/]")
+    if not ranked:
+        console.print(NO_OPPORTUNITY)
+    for position, item in enumerate(ranked[:TOP_OPPORTUNITIES], start=1):
+        console.print(
+            f"{position}. {item.lever} risk {item.risk_class} "
+            f"{format_range(item.confidence_interval, result.currency)}"
+        )
+        console.print(
+            f"   {item.eligible_requests} eligible request(s) worth "
+            f"{format_money(item.eligible_spend, result.currency)}; {item.assumptions[0]}"
+        )
+    console.print()
+    summary = headline(result.opportunities, include_quality_affecting=include_quality_affecting)
+    console.print("[bold]Total addressable range[/]")
+    console.print(
+        f"{format_amount(summary.low)} to {format_amount(summary.high)} {result.currency}"
+    )
+    console.print(
+        "risk classes in scope: "
+        + ", ".join(scoped_levers(include_quality_affecting=include_quality_affecting))
+    )
+    if summary.warning is not None:
+        console.print(summary.warning)
+    console.print()
+
+
+def _print_audit_realized(result: AuditResult) -> None:
+    console.print("[bold]Realized cache behaviour[/]")
+    if not result.realized:
+        console.print("this log records no prefix-cache reads")
+    for item in result.realized:
+        console.print(
+            f"{item.lever} {format_range(item.confidence_interval, result.currency)} "
+            "measured from the log; already captured, so it is not in the addressable total"
+        )
+    console.print()
+
+
+def _print_audit_quality(result: AuditResult, *, include_quality_affecting: bool) -> None:
+    console.print("[bold]Quality-affecting levers[/]")
+    console.print(
+        "in the headline above because --include-quality-affecting was passed"
+        if include_quality_affecting
+        else "excluded from the headline above; they can change the responses callers receive"
+    )
+    for item in result.opportunities:
+        if item.risk_class != QUALITY_AFFECTING:
+            continue
+        figure = (
+            format_range(item.confidence_interval, result.currency)
+            if item.confidence_interval is not None
+            else "not sized from this log"
+        )
+        console.print(f"{item.lever} status {item.status} figure {figure}")
+        console.print(f"   {VALIDATION_REQUIREMENTS[item.lever]}")
+        console.print(f"   validate with: {VALIDATION_COMMANDS[item.lever]}")
+    console.print()
+
+
+def command_audit(args: argparse.Namespace) -> None:
+    _assert_distinct_paths(
+        logs=args.logs,
+        mapping=args.mapping,
+        price_book=args.price_book,
+        html=args.html,
+        json_output=args.json_output,
+    )
+    mapping = None if args.mapping is None else _audit_mapping(args.mapping)
+    book = _audit_price_book(args.price_book)
+    records, report, format_id = _read_audit_log(args.logs, args.format, mapping)
+    priced, unpriced = price_records(records, book)
+    currency = _audit_currency(book, priced, args.currency)
+    opportunities, overlaps = detect_opportunities(priced, book=book, window_seconds=args.window)
+    workload = profile_workload(priced, unpriced, report)
+    scope = bool(args.include_quality_affecting)
+    result = AuditResult(
+        source=str(args.logs),
+        source_sha256=sha256_file(args.logs),
+        format_id=format_id,
+        currency=currency,
+        observed_spend=sum_money([item.spend for item in priced]),
+        spend_by_model=spend_by_model(priced),
+        workload=workload,
+        opportunities=opportunities,
+        overlaps=overlaps,
+        price_book=PriceBookProvenance(
+            schema_version=PRICE_BOOK_SCHEMA_VERSION,
+            path=str(args.price_book or PACKAGED_PRICE_BOOK),
+            currency=currency,
+            entries=tuple(
+                sorted(
+                    {
+                        (
+                            item.entry.provider,
+                            item.entry.model,
+                            item.entry.effective_date.isoformat(),
+                        )
+                        for item in priced
+                    }
+                )
+            ),
+        ),
+        window_seconds=args.window,
+        reproduction_command=_audit_reproduction_command(args, format_id, currency),
+        fixes=_audit_fixes(workload),
+    )
+    _print_audit_spend(result)
+    _print_audit_coverage(result)
+    _print_audit_opportunities(result, include_quality_affecting=scope)
+    _print_audit_realized(result)
+    _print_audit_quality(result, include_quality_affecting=scope)
+    console.print("[bold]Recommended next action[/]")
+    console.print(next_action(result, include_quality_affecting=scope))
+    if args.html:
+        atomic_write_text(args.html, render_html(result, include_quality_affecting=scope))
+        console.print(f"Wrote HTML report to [cyan]{args.html}[/]")
+    if args.json_output:
+        payload = result.to_dict()
+        payload["include_quality_affecting"] = scope
+        payload["headline"] = _headline_payload(result, include_quality_affecting=scope)
+        payload["recommended_next_action"] = next_action(result, include_quality_affecting=scope)
+        atomic_write_text(args.json_output, json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        console.print(f"Wrote audit JSON to [cyan]{args.json_output}[/]")
+
+
+def _headline_payload(result: AuditResult, *, include_quality_affecting: bool) -> dict:
+    summary = headline(result.opportunities, include_quality_affecting=include_quality_affecting)
+    return {
+        "low": str(summary.low),
+        "high": str(summary.high),
+        "levers": list(summary.levers),
+        "risk_classes": list(scoped_levers(include_quality_affecting=include_quality_affecting)),
+        "warning": summary.warning,
+    }
 
 
 def command_train(args: argparse.Namespace) -> None:
@@ -1018,12 +1361,44 @@ def build_parser() -> argparse.ArgumentParser:
     split.add_argument("--manifest")
     split.set_defaults(handler=command_split)
 
-    audit = subparsers.add_parser(
-        "audit", help="validate trajectory integrity and profile observation coverage"
+    integrity = subparsers.add_parser(
+        "integrity", help="validate trajectory integrity and profile observation coverage"
     )
-    audit.add_argument("--data", required=True)
-    audit.add_argument("--compare", help="second dataset that must be disjoint")
-    audit.add_argument("--json-output")
+    integrity.add_argument("--data", required=True)
+    integrity.add_argument("--compare", help="second dataset that must be disjoint")
+    integrity.add_argument("--json-output")
+    integrity.set_defaults(handler=command_integrity)
+
+    audit = subparsers.add_parser(
+        "audit", help="size the spend opportunity in a production LLM traffic log"
+    )
+    audit.add_argument("logs", help="path to the traffic log to audit")
+    audit.add_argument(
+        "--format",
+        default="auto",
+        choices=("auto", *FORMAT_IDS),
+        help="log format; 'auto' detects it and refuses to guess (default: auto)",
+    )
+    audit.add_argument(
+        "--mapping",
+        help="JSON field mapping, required by and only used with --format generic-jsonl",
+    )
+    audit.add_argument(
+        "--price-book", help="rate cards to price this log with (default: the packaged book)"
+    )
+    audit.add_argument(
+        "--window",
+        type=_window,
+        help="deduplication window in seconds (default: every record in the file)",
+    )
+    audit.add_argument("--html", help="write a standalone HTML report to this path")
+    audit.add_argument("--json", dest="json_output", help="write the audit result to this path")
+    audit.add_argument("--currency", help="assert the currency the price book quotes")
+    audit.add_argument(
+        "--include-quality-affecting",
+        action="store_true",
+        help="widen the headline to levers that can change responses (adds a warning block)",
+    )
     audit.set_defaults(handler=command_audit)
 
     train = subparsers.add_parser("train", help="fit the offline Q-controller")

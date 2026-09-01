@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "provider": "acme",
+      "model": "acme-large",
+      "input": "10",
+      "output": "30",
+      "cached_input": "1",
+      "batch_input": "4",
+      "batch_output": "6",
+      "currency": "USD",
+      "effective_date": "2026-08-27",
+      "source_url": "https://example.invalid/acme/pricing"
+    },
+    {
+      "provider": "acme",
+      "model": "acme-small",
+      "input": "1",
+      "output": "3",
+      "cached_input": "0.1",
+      "batch_input": "0.4",
+      "batch_output": "0.6",
+      "currency": "USD",
+      "effective_date": "2026-08-27",
+      "source_url": "https://example.invalid/acme/pricing"
+    },
+    {
+      "provider": "zenith",
+      "model": "zenith-solo",
+      "input": "2",
+      "output": "4",
+      "cached_input": "2",
+      "batch_input": "2",
+      "batch_output": "4",
+      "currency": "USD",
+      "effective_date": "2026-08-27",
+      "source_url": "https://example.invalid/zenith/pricing"
+    }
+  ]
+}

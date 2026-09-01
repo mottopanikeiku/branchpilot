@@ -342,10 +342,10 @@ uv run modal run modal_app.py \
 cp artifacts/gsm8k-v2/manifest.json benchmarks/manifest-v2.json
 
 # Fail closed on duplicate or overlapping model-visible prompts.
-uv run branchpilot audit \
+uv run branchpilot integrity \
   --data artifacts/gsm8k-v2/train.jsonl \
   --compare artifacts/gsm8k-v2/validation.jsonl
-uv run branchpilot audit \
+uv run branchpilot integrity \
   --data artifacts/gsm8k-v2/train.jsonl \
   --compare artifacts/gsm8k-v2/test.jsonl
 
@@ -389,7 +389,8 @@ The report publishes every fixed count 1–8, the complete confidence/agreement 
 | `branchpilot quickstart` | Run the zero-GPU synthetic → train → benchmark → report pipeline |
 | `branchpilot synthetic` | Generate deterministic correlated reasoning trajectories |
 | `branchpilot split` | Create seeded, fingerprinted, verified-disjoint data splits |
-| `branchpilot audit` | Validate identity disjointness and profile parse/logprob/token coverage |
+| `branchpilot audit` | Size the spend opportunity in a production LLM traffic log |
+| `branchpilot integrity` | Validate identity disjointness and profile parse/logprob/token coverage |
 | `branchpilot train` | Fit exact backward Q-targets and save a safe policy artifact |
 | `branchpilot evaluate` | Bootstrap exhaustive learned/fixed/heuristic rows; freeze or consume validation comparators |
 | `branchpilot report` | Render standalone HTML/SVG evidence from benchmark JSON |

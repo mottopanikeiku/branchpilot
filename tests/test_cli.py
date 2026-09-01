@@ -30,6 +30,7 @@ def test_every_cli_help_surface_renders() -> None:
         "audit",
         "demo",
         "evaluate",
+        "integrity",
         "plan",
         "quickstart",
         "report",
@@ -38,6 +39,12 @@ def test_every_cli_help_surface_renders() -> None:
         "train",
     }
     assert "95% upper bound" in help_by_command["plan"]
+    assert "second dataset that must be disjoint" in help_by_command["integrity"]
+    assert "path to the traffic log to audit" in help_by_command["audit"]
+    assert "--include-quality-affecting" in help_by_command["audit"]
+    top_level = parser.format_help()
+    assert "validate trajectory integrity" in top_level
+    assert "size the spend opportunity" in top_level
 
 
 def test_distinct_path_guard_rejects_normalized_hardlink_and_symlink_aliases(
