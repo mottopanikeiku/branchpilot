@@ -27,6 +27,17 @@ messages under the same framing. When a request has no system prefix the value i
 :data:`EMPTY_TEXT_HASH` -- the digest of the empty *byte string*, not of a framed empty
 message -- so "no prefix" is a distinct constant that cannot collide with a real prefix.
 
+``system_prefix_chars`` is the exact number of characters of *content text* in that same
+contiguous system prefix, summed over every text part of every prefix message. It is
+measured while the text is in the hasher's hands and before the text is dropped, so it
+costs no extra pass and retains nothing: a count is not text, and no tokenizer is
+involved. Roles, framing bytes, and non-text blocks contribute nothing. A request with no
+system prefix has ``system_prefix_chars == 0``.
+
+Volatile-prefix detection is what this count exists for: a cluster whose prefix *length*
+is stable while its ``system_prefix_hash`` churns is a prefix with an injected timestamp,
+uuid, or per-user string in it, silently defeating the provider's prefix cache.
+
 Token normalization
 -------------------
 ``prompt_tokens`` is always the full billed prompt and ``cached_prompt_tokens`` is always
@@ -171,6 +182,9 @@ class RequestRecord:
     status: str
     group_key: str | None
     raw_index: int
+    # Declared last with a default so hand-built records stay valid. Every reader in this
+    # module populates it explicitly; the default is never a data path.
+    system_prefix_chars: int = 0
 
     def __post_init__(self) -> None:
         for name in ("id", "model", "provider"):
@@ -194,7 +208,7 @@ class RequestRecord:
                     f"RequestRecord {name} must be 32 lowercase hex characters; "
                     "fix: build it with sha256(...).digest()[:16].hex()"
                 )
-        for name in ("prompt_tokens", "completion_tokens", "raw_index"):
+        for name in ("prompt_tokens", "completion_tokens", "raw_index", "system_prefix_chars"):
             value = getattr(self, name)
             if not isinstance(value, int) or isinstance(value, bool):
                 raise IngestError(
@@ -467,13 +481,16 @@ def _content_parts(content: Any, index: int, field: str) -> tuple[tuple[str, str
     )
 
 
-def _update_message(hasher: Any, role: str, content: Any, index: int, field: str) -> None:
-    parts = _content_parts(content, index, field)
+def _frame_parts(hasher: Any, role: str, parts: Sequence[tuple[str, str]]) -> None:
     _frame(hasher, role)
     _frame(hasher, str(len(parts)))
     for kind, text in parts:
         _frame(hasher, kind)
         _frame(hasher, text)
+
+
+def _update_message(hasher: Any, role: str, content: Any, index: int, field: str) -> None:
+    _frame_parts(hasher, role, _content_parts(content, index, field))
 
 
 def _message_triples(messages: Any, index: int, field: str) -> list[tuple[str, Any, str]]:
@@ -518,24 +535,28 @@ def _generic_triples(
     return triples
 
 
-def _hash_messages(triples: Sequence[tuple[str, Any, str]], index: int) -> tuple[str, str]:
-    """Hash a message list into ``(messages_hash, system_prefix_hash)``.
+def _hash_messages(triples: Sequence[tuple[str, Any, str]], index: int) -> tuple[str, str, int]:
+    """Hash a message list into ``(messages_hash, system_prefix_hash, system_prefix_chars)``.
 
-    Text is consumed by the hashers and never copied into a return value.
+    Text is consumed by the hashers and measured in place; only digests and a character
+    count are returned, never a copy of the text.
     """
     full = hashlib.sha256()
     prefix = hashlib.sha256()
     prefix_messages = 0
+    prefix_chars = 0
     in_prefix = True
     for role, content, path in triples:
-        _update_message(full, role, content, index, path)
+        parts = _content_parts(content, index, path)
+        _frame_parts(full, role, parts)
         if in_prefix and role in _SYSTEM_ROLES:
-            _update_message(prefix, role, content, index, path)
+            _frame_parts(prefix, role, parts)
             prefix_messages += 1
+            prefix_chars += sum(len(text) for _, text in parts)
         else:
             in_prefix = False
     system_prefix_hash = prefix.digest()[:_HASH_BYTES].hex() if prefix_messages else EMPTY_TEXT_HASH
-    return full.digest()[:_HASH_BYTES].hex(), system_prefix_hash
+    return full.digest()[:_HASH_BYTES].hex(), system_prefix_hash, prefix_chars
 
 
 def _discard_completion(content: Any, index: int, field: str) -> None:
@@ -792,7 +813,7 @@ def read_openai_jsonl(obj: Mapping[str, Any], index: int) -> RequestRecord | Ski
         return Skipped("missing_usage")
     token_fix = "report integer 'prompt_tokens' and 'completion_tokens' in 'response.usage'"
     usage = _as_mapping(raw_usage, "response.usage", index, token_fix)
-    messages_hash, system_prefix_hash = _hash_messages(
+    messages_hash, system_prefix_hash, system_prefix_chars = _hash_messages(
         _message_triples(messages, index, "request.messages"), index
     )
     _discard_completion(
@@ -821,6 +842,7 @@ def read_openai_jsonl(obj: Mapping[str, Any], index: int) -> RequestRecord | Ski
         ).lower(),
         messages_hash=messages_hash,
         system_prefix_hash=system_prefix_hash,
+        system_prefix_chars=system_prefix_chars,
         prompt_tokens=_as_int(
             _dig(usage, "prompt_tokens"), "response.usage.prompt_tokens", index, token_fix
         ),
@@ -875,7 +897,7 @@ def read_anthropic_jsonl(obj: Mapping[str, Any], index: int) -> RequestRecord | 
     if system is not _MISSING and system not in (None, "", []):
         triples.append(("system", system, "request.system"))
     triples.extend(_message_triples(messages, index, "request.messages"))
-    messages_hash, system_prefix_hash = _hash_messages(triples, index)
+    messages_hash, system_prefix_hash, system_prefix_chars = _hash_messages(triples, index)
     _discard_completion(_dig(response, "content"), index, "response.content")
     input_tokens = _as_int(
         _dig(usage, "input_tokens"), "response.usage.input_tokens", index, token_fix
@@ -919,6 +941,7 @@ def read_anthropic_jsonl(obj: Mapping[str, Any], index: int) -> RequestRecord | 
         ).lower(),
         messages_hash=messages_hash,
         system_prefix_hash=system_prefix_hash,
+        system_prefix_chars=system_prefix_chars,
         prompt_tokens=input_tokens + (cache_read or 0) + (cache_creation or 0),
         cached_prompt_tokens=cache_read,
         completion_tokens=_as_int(
@@ -952,7 +975,7 @@ def read_litellm_jsonl(obj: Mapping[str, Any], index: int) -> RequestRecord | Sk
     raw_prompt_tokens = _dig(obj, "prompt_tokens")
     if raw_prompt_tokens is _MISSING or raw_prompt_tokens is None:
         return Skipped("missing_usage")
-    messages_hash, system_prefix_hash = _hash_messages(
+    messages_hash, system_prefix_hash, system_prefix_chars = _hash_messages(
         _message_triples(messages, index, "messages"), index
     )
     _discard_completion(
@@ -988,6 +1011,7 @@ def read_litellm_jsonl(obj: Mapping[str, Any], index: int) -> RequestRecord | Sk
         ).lower(),
         messages_hash=messages_hash,
         system_prefix_hash=system_prefix_hash,
+        system_prefix_chars=system_prefix_chars,
         prompt_tokens=_as_int(raw_prompt_tokens, "prompt_tokens", index, token_fix),
         cached_prompt_tokens=_as_optional_int(
             _dig(obj, "cache_read_input_tokens"), "cache_read_input_tokens", index, token_fix
@@ -1037,7 +1061,7 @@ def read_helicone_export(obj: Mapping[str, Any], index: int) -> RequestRecord | 
         return Skipped("missing_usage")
     usage = _as_mapping(raw_usage, usage_path, index, token_fix)
     prefix = "" if usage_path == "prompt_tokens" else "response_body.usage."
-    messages_hash, system_prefix_hash = _hash_messages(
+    messages_hash, system_prefix_hash, system_prefix_chars = _hash_messages(
         _message_triples(messages, index, "request_body.messages"), index
     )
     _discard_completion(
@@ -1061,6 +1085,7 @@ def read_helicone_export(obj: Mapping[str, Any], index: int) -> RequestRecord | 
         ).lower(),
         messages_hash=messages_hash,
         system_prefix_hash=system_prefix_hash,
+        system_prefix_chars=system_prefix_chars,
         prompt_tokens=_as_int(
             _dig(usage, "prompt_tokens"), f"{prefix}prompt_tokens", index, token_fix
         ),
@@ -1095,7 +1120,7 @@ def read_openrouter_export(obj: Mapping[str, Any], index: int) -> RequestRecord 
     messages = _dig(obj, "messages")
     if messages is _MISSING or messages is None:
         return Skipped("missing_message_content")
-    messages_hash, system_prefix_hash = _hash_messages(
+    messages_hash, system_prefix_hash, system_prefix_chars = _hash_messages(
         _message_triples(messages, index, "messages"), index
     )
     _discard_completion(_dig(obj, "completion"), index, "completion")
@@ -1125,6 +1150,7 @@ def read_openrouter_export(obj: Mapping[str, Any], index: int) -> RequestRecord 
         ).lower(),
         messages_hash=messages_hash,
         system_prefix_hash=system_prefix_hash,
+        system_prefix_chars=system_prefix_chars,
         prompt_tokens=_as_int(prompt_value, prompt_path, index, token_fix),
         cached_prompt_tokens=_as_optional_int(
             _dig(obj, "native_tokens_cached"), "native_tokens_cached", index, token_fix
@@ -1262,7 +1288,7 @@ def _read_generic(
         raise MalformedRecordError(
             index, messages_path, "is missing", fix("messages", "the message array")
         )
-    messages_hash, system_prefix_hash = _hash_messages(
+    messages_hash, system_prefix_hash, system_prefix_chars = _hash_messages(
         _generic_triples(messages, index, messages_path, role_key, content_key), index
     )
     completion_path, completion = fetch("completion")
@@ -1287,6 +1313,7 @@ def _read_generic(
         ).lower(),
         messages_hash=messages_hash,
         system_prefix_hash=system_prefix_hash,
+        system_prefix_chars=system_prefix_chars,
         prompt_tokens=_as_int(
             prompt_value, prompt_path, index, fix("prompt_tokens", "an integer token count")
         ),

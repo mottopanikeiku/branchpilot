@@ -105,6 +105,11 @@ def expected_system_prefix_hash(i: int) -> str:
     return digest_messages([("system", [("text", SYSTEMS[i])])])
 
 
+def expected_system_prefix_chars(i: int) -> int:
+    system = SYSTEMS[i]
+    return 0 if system is None else len(system)
+
+
 # --------------------------------------------------------------------------------------
 # per-format expectations
 # --------------------------------------------------------------------------------------
@@ -210,6 +215,7 @@ def test_fixture_maps_to_expected_records(format_id: str) -> None:
         assert record.provider == spec["provider"]
         assert record.messages_hash == expected_messages_hash(i)
         assert record.system_prefix_hash == expected_system_prefix_hash(i)
+        assert record.system_prefix_chars == expected_system_prefix_chars(i)
         assert record.prompt_tokens == PROMPT_TOKENS[i]
         assert record.cached_prompt_tokens == CACHED_TOKENS[i]
         assert record.completion_tokens == COMPLETION_TOKENS[i]
@@ -233,8 +239,12 @@ def test_hashes_are_identical_across_formats() -> None:
     for i in range(6):
         message_hashes = {records[i].messages_hash for records in per_format.values()}
         prefix_hashes = {records[i].system_prefix_hash for records in per_format.values()}
+        prefix_chars = {records[i].system_prefix_chars for records in per_format.values()}
         assert len(message_hashes) == 1, f"record {i} hashes differ between formats"
         assert len(prefix_hashes) == 1, f"record {i} prefix hashes differ between formats"
+        assert prefix_chars == {expected_system_prefix_chars(i)}, (
+            f"record {i} prefix char counts differ between formats"
+        )
 
 
 def test_shared_prefix_clusters_by_system_prefix_hash() -> None:
@@ -242,6 +252,67 @@ def test_shared_prefix_clusters_by_system_prefix_hash() -> None:
     assert records[0].system_prefix_hash == records[1].system_prefix_hash
     assert records[4].system_prefix_hash == records[5].system_prefix_hash
     assert records[0].system_prefix_hash != records[4].system_prefix_hash
+
+
+def test_system_prefix_chars_counts_content_text_only() -> None:
+    """The count covers prefix content characters: not roles, framing, or non-text blocks."""
+    base = {
+        "id": "gen-mixed",
+        "created_at": "2026-04-01T09:00:00Z",
+        "model": "gpt-4o-mini",
+        "provider_name": "OpenAI",
+        "native_tokens_prompt": 100,
+        "native_tokens_completion": 5,
+        "messages": [
+            {
+                "role": "system",
+                "content": [
+                    {"type": "text", "text": "abcde"},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+                    {"type": "text", "text": "fg"},
+                ],
+            },
+            {"role": "developer", "content": "hij"},
+            # The prefix ends here, so nothing below is counted.
+            {"role": "user", "content": "a much longer user turn that must not be counted"},
+            {"role": "system", "content": "a late system message is outside the prefix"},
+        ],
+    }
+    record = read_openrouter_export(base, 0)
+    assert isinstance(record, RequestRecord)
+    assert record.system_prefix_chars == len("abcde") + len("fg") + len("hij")
+
+
+def test_system_prefix_chars_is_zero_without_a_prefix() -> None:
+    records, _ = read_fixture("openai-jsonl")
+    assert SYSTEMS[3] is None
+    assert records[3].system_prefix_chars == 0
+    assert records[0].system_prefix_chars > 0
+
+
+def test_stable_prefix_length_with_a_churning_hash_is_visible() -> None:
+    """The volatile-prefix signal: equal lengths, differing hashes, from ingest alone."""
+    prefix = "You are the pangolin assistant. Session f47ac10b-58cc-4372-a567-0e02b2c3d479."
+    other = prefix.replace("f47ac10b", "9c858901")
+    assert len(prefix) == len(other)
+    base = {
+        "id": "gen-volatile-0",
+        "created_at": "2026-04-01T09:00:00Z",
+        "model": "gpt-4o-mini",
+        "provider_name": "OpenAI",
+        "native_tokens_prompt": 100,
+        "native_tokens_completion": 5,
+        "messages": [{"role": "system", "content": prefix}, {"role": "user", "content": "go"}],
+    }
+    first = read_openrouter_export(base, 0)
+    second_obj = json.loads(json.dumps(base))
+    second_obj["id"] = "gen-volatile-1"
+    second_obj["messages"][0]["content"] = other
+    second = read_openrouter_export(second_obj, 1)
+    assert isinstance(first, RequestRecord)
+    assert isinstance(second, RequestRecord)
+    assert first.system_prefix_chars == second.system_prefix_chars == len(prefix)
+    assert first.system_prefix_hash != second.system_prefix_hash
 
 
 # --------------------------------------------------------------------------------------
@@ -756,6 +827,7 @@ def valid_record_kwargs(**overrides: object) -> dict[str, object]:
         "status": "ok",
         "group_key": None,
         "raw_index": 0,
+        "system_prefix_chars": 76,
     }
     kwargs.update(overrides)
     return kwargs
@@ -782,6 +854,9 @@ def valid_record_kwargs(**overrides: object) -> dict[str, object]:
         {"status": "success"},
         {"group_key": ""},
         {"raw_index": -1},
+        {"system_prefix_chars": -1},
+        {"system_prefix_chars": 76.0},
+        {"system_prefix_chars": True},
     ],
 )
 def test_request_record_refuses_invalid_values(overrides: dict[str, object]) -> None:
