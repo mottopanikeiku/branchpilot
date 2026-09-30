@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling==1.32.0"]
+requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
@@ -27,30 +27,30 @@ classifiers = [
 ]
 dependencies = [
   "numpy>=1.26,<3",
-  "rich>=13.7,<15",
+  "rich>=13.7,<16",
   "safetensors>=0.6,<1",
 ]
 
 [project.optional-dependencies]
 build = [
-  "hatchling==1.32.0",
+  "hatchling==1.32.4",
 ]
 train = [
   "torch>=2.6,<3",
 ]
 dev = [
   "fastapi==0.141.1",
-  "hatchling==1.32.0",
+  "hatchling==1.32.4",
   "httpx==0.28.1",
-  "httpx2==2.12.0",
-  "openai==2.54.0",
-  "pydantic==2.13.4",
-  "pytest>=8.2,<9",
+  "httpx2==2.13.1",
+  "openai==3.19.2",
+  "pydantic==2.13.5",
+  "pytest>=8.2,<10",
   "pyyaml==6.0.3",
   "ruff>=0.6,<1",
-  "starlette==1.6.0",
+  "starlette==1.7.0",
   "torch>=2.6,<3",
-  "uvicorn==0.52.4",
+  "uvicorn==0.54.0",
 ]
 modal = [
   "modal>=1.5,<2",
@@ -58,10 +58,10 @@ modal = [
 gateway = [
   "fastapi==0.141.1",
   "httpx==0.28.1",
-  "openai==2.54.0",
-  "pydantic==2.13.4",
-  "starlette==1.6.0",
-  "uvicorn==0.52.4",
+  "openai==3.19.2",
+  "pydantic==2.13.5",
+  "starlette==1.7.0",
+  "uvicorn==0.54.0",
 ]
 importers = [
   "pyyaml==6.0.3",
@@ -70,7 +70,7 @@ its-hub = [
   "its_hub==1.2.0; python_version >= '3.11'",
 ]
 openai = [
-  "openai==2.54.0",
+  "openai==3.19.2",
 ]
 postgres = [
   "asyncpg==0.31.0",
