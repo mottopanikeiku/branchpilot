@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1160" height="790" viewBox="0 0 1160 790" role="img" aria-labelledby="title desc">
+<title id="title">GSM8K: accuracy versus average samples per prompt</title>
+<desc id="desc">Fixed counts 1 through 8, vote-confidence thresholds, agreement streaks, and all six learned-policy costs. Test outcomes for 1319 prompts; marginal 95% paired prompt bootstrap intervals on both axes. Offline replay, not measured speed or dollar savings.</desc>
+<rect width="1160" height="790" fill="#fff"/>
+<g font-family="sans-serif" fill="#17212e">
+<text x="55.00" y="42.00" font-size="25" font-weight="bold">GSM8K: accuracy vs. average samples per prompt</text>
+<text x="55.00" y="70.00" font-size="16" >Qwen2.5-1.5B-Instruct · 1,319 test prompts · committed response-bank replay</text>
+<text x="55.00" y="94.00" font-size="14" >95% paired prompt bootstrap · 10,000 resamples · seed 17</text>
+<circle cx="60" cy="125" r="5" fill="#334155"/>
+<text x="73.00" y="130.00" font-size="14" >Fixed count 1–8</text>
+<circle cx="330" cy="125" r="5" fill="#087e8b"/>
+<text x="343.00" y="130.00" font-size="14" >Vote confidence</text>
+<circle cx="600" cy="125" r="5" fill="#a65c00"/>
+<text x="613.00" y="130.00" font-size="14" >Consecutive agreement</text>
+<circle cx="870" cy="125" r="5" fill="#9d317b"/>
+<text x="883.00" y="130.00" font-size="14" >Learned policy</text>
+<path d="M119.80 160V630" stroke="#e2e8f0"/>
+<text x="119.80" y="655.00" font-size="14" text-anchor="middle">1</text>
+<path d="M219.14 160V630" stroke="#e2e8f0"/>
+<text x="219.14" y="655.00" font-size="14" text-anchor="middle">2</text>
+<path d="M318.49 160V630" stroke="#e2e8f0"/>
+<text x="318.49" y="655.00" font-size="14" text-anchor="middle">3</text>
+<path d="M417.83 160V630" stroke="#e2e8f0"/>
+<text x="417.83" y="655.00" font-size="14" text-anchor="middle">4</text>
+<path d="M517.17 160V630" stroke="#e2e8f0"/>
+<text x="517.17" y="655.00" font-size="14" text-anchor="middle">5</text>
+<path d="M616.51 160V630" stroke="#e2e8f0"/>
+<text x="616.51" y="655.00" font-size="14" text-anchor="middle">6</text>
+<path d="M715.86 160V630" stroke="#e2e8f0"/>
+<text x="715.86" y="655.00" font-size="14" text-anchor="middle">7</text>
+<path d="M815.20 160V630" stroke="#e2e8f0"/>
+<text x="815.20" y="655.00" font-size="14" text-anchor="middle">8</text>
+<path d="M90 630.00H845" stroke="#e2e8f0"/>
+<text x="78.00" y="635.00" font-size="14" text-anchor="end">65%</text>
+<path d="M90 506.32H845" stroke="#e2e8f0"/>
+<text x="78.00" y="511.32" font-size="14" text-anchor="end">70%</text>
+<path d="M90 382.63H845" stroke="#e2e8f0"/>
+<text x="78.00" y="387.63" font-size="14" text-anchor="end">75%</text>
+<path d="M90 258.95H845" stroke="#e2e8f0"/>
+<text x="78.00" y="263.95" font-size="14" text-anchor="end">80%</text>
+<text x="467.50" y="689.00" font-size="17" text-anchor="middle">Average samples per prompt (not time or dollars)</text>
+<text transform="translate(28 395.0) rotate(-90)" text-anchor="middle" font-size="17">Answer accuracy</text>
+<path d="M90 160V630H845" fill="none" stroke="#64748b"/>
+<polygon points="119.80,475.00 219.14,396.23 318.49,336.21 417.83,304.33 517.17,255.57 616.51,236.82 715.86,227.44 815.20,204.94 815.20,309.96 715.86,336.21 616.51,345.59 517.17,368.10 417.83,420.61 318.49,454.37 219.14,520.01 119.80,600.65" fill="#334155" fill-opacity="0.07"/>
+<polyline points="119.80,536.89 219.14,458.12 318.49,394.35 417.83,362.47 517.17,311.83 616.51,291.20 715.86,281.83 815.20,257.45" fill="none" stroke="#334155" stroke-width="1.6"/>
+<g stroke="#334155" stroke-opacity="0.4"><path d="M119.80 536.89H119.80M119.80 600.65V475.00"/><path d="M119.80 533.89v6M119.80 533.89v6M116.80 600.65h6M116.80 475.00h6"/></g>
+<circle cx="119.80" cy="536.89" r="4" fill="#334155"><title>fixed-1: accuracy 0.687642; average samples 1.000000</title></circle>
+<text x="127.80" y="551.89" font-size="13" fill="#334155">1</text>
+<g stroke="#334155" stroke-opacity="0.4"><path d="M219.14 458.12H219.14M219.14 520.01V396.23"/><path d="M219.14 455.12v6M219.14 455.12v6M216.14 520.01h6M216.14 396.23h6"/></g>
+<circle cx="219.14" cy="458.12" r="4" fill="#334155"><title>fixed-2: accuracy 0.719484; average samples 2.000000</title></circle>
+<text x="227.14" y="473.12" font-size="13" fill="#334155">2</text>
+<g stroke="#334155" stroke-opacity="0.4"><path d="M318.49 394.35H318.49M318.49 454.37V336.21"/><path d="M318.49 391.35v6M318.49 391.35v6M315.49 454.37h6M315.49 336.21h6"/></g>
+<circle cx="318.49" cy="394.35" r="4" fill="#334155"><title>fixed-3: accuracy 0.745262; average samples 3.000000</title></circle>
+<text x="326.49" y="409.35" font-size="13" fill="#334155">3</text>
+<g stroke="#334155" stroke-opacity="0.4"><path d="M417.83 362.47H417.83M417.83 420.61V304.33"/><path d="M417.83 359.47v6M417.83 359.47v6M414.83 420.61h6M414.83 304.33h6"/></g>
+<circle cx="417.83" cy="362.47" r="4" fill="#334155"><title>fixed-4: accuracy 0.758150; average samples 4.000000</title></circle>
+<text x="425.83" y="377.47" font-size="13" fill="#334155">4</text>
+<g stroke="#334155" stroke-opacity="0.4"><path d="M517.17 311.83H517.17M517.17 368.10V255.57"/><path d="M517.17 308.83v6M517.17 308.83v6M514.17 368.10h6M514.17 255.57h6"/></g>
+<circle cx="517.17" cy="311.83" r="4" fill="#334155"><title>fixed-5: accuracy 0.778620; average samples 5.000000</title></circle>
+<text x="525.17" y="326.83" font-size="13" fill="#334155">5</text>
+<g stroke="#334155" stroke-opacity="0.4"><path d="M616.51 291.20H616.51M616.51 345.59V236.82"/><path d="M616.51 288.20v6M616.51 288.20v6M613.51 345.59h6M613.51 236.82h6"/></g>
+<circle cx="616.51" cy="291.20" r="4" fill="#334155"><title>fixed-6: accuracy 0.786960; average samples 6.000000</title></circle>
+<text x="624.51" y="306.20" font-size="13" fill="#334155">6</text>
+<g stroke="#334155" stroke-opacity="0.4"><path d="M715.86 281.83H715.86M715.86 336.21V227.44"/><path d="M715.86 278.83v6M715.86 278.83v6M712.86 336.21h6M712.86 227.44h6"/></g>
+<circle cx="715.86" cy="281.83" r="4" fill="#334155"><title>fixed-7: accuracy 0.790751; average samples 7.000000</title></circle>
+<text x="723.86" y="296.83" font-size="13" fill="#334155">7</text>
+<g stroke="#334155" stroke-opacity="0.4"><path d="M815.20 257.45H815.20M815.20 309.96V204.94"/><path d="M815.20 254.45v6M815.20 254.45v6M812.20 309.96h6M812.20 204.94h6"/></g>
+<circle cx="815.20" cy="257.45" r="4" fill="#334155"><title>fixed-8: accuracy 0.800607; average samples 8.000000</title></circle>
+<text x="823.20" y="272.45" font-size="13" fill="#334155">8</text>
+<polygon points="219.14,396.23 334.53,234.94 335.66,234.94 340.78,233.07 395.01,216.19 395.01,216.19 398.55,216.19 415.27,212.44 428.75,212.44 432.89,212.44 432.89,212.44 432.89,212.44 432.89,319.34 432.89,319.34 432.89,319.34 428.75,319.34 415.27,321.21 398.55,324.96 395.01,324.96 395.01,324.96 340.78,343.72 335.66,345.59 334.53,345.59 219.14,520.01" fill="#087e8b" fill-opacity="0.07"/>
+<polyline points="219.14,458.12 334.53,289.33 335.66,289.33 340.78,287.45 395.01,270.57 395.01,270.57 398.55,270.57 415.27,266.82 428.75,264.95 432.89,264.95 432.89,264.95 432.89,264.95" fill="none" stroke="#087e8b" stroke-width="1.6"/>
+<g stroke="#087e8b" stroke-opacity="0.4"><path d="M219.14 458.12H219.14M219.14 520.01V396.23"/><path d="M219.14 455.12v6M219.14 455.12v6M216.14 520.01h6M216.14 396.23h6"/></g>
+<circle cx="219.14" cy="458.12" r="4" fill="#087e8b"><title>confidence-0.5: accuracy 0.719484; average samples 2.000000</title></circle>
+<g stroke="#087e8b" stroke-opacity="0.4"><path d="M323.38 289.33H346.28M334.53 345.59V234.94"/><path d="M323.38 286.33v6M346.28 286.33v6M331.53 345.59h6M331.53 234.94h6"/></g>
+<circle cx="334.53" cy="289.33" r="4" fill="#087e8b"><title>confidence-0.55: accuracy 0.787718; average samples 3.161486</title></circle>
+<g stroke="#087e8b" stroke-opacity="0.4"><path d="M324.29 289.33H347.56M335.66 345.59V234.94"/><path d="M324.29 286.33v6M347.56 286.33v6M332.66 345.59h6M332.66 234.94h6"/></g>
+<circle cx="335.66" cy="289.33" r="4" fill="#087e8b"><title>confidence-0.6: accuracy 0.787718; average samples 3.172858</title></circle>
+<g stroke="#087e8b" stroke-opacity="0.4"><path d="M329.03 287.45H352.91M340.78 343.72V233.07"/><path d="M329.03 284.45v6M352.91 284.45v6M337.78 343.72h6M337.78 233.07h6"/></g>
+<circle cx="340.78" cy="287.45" r="4" fill="#087e8b"><title>confidence-0.65: accuracy 0.788476; average samples 3.224412</title></circle>
+<g stroke="#087e8b" stroke-opacity="0.4"><path d="M381.38 270.57H409.24M395.01 324.96V216.19"/><path d="M381.38 267.57v6M409.24 267.57v6M392.01 324.96h6M392.01 216.19h6"/></g>
+<circle cx="395.01" cy="270.57" r="4" fill="#087e8b"><title>confidence-0.67: accuracy 0.795299; average samples 3.770281</title></circle>
+<g stroke="#087e8b" stroke-opacity="0.4"><path d="M381.38 270.57H409.24M395.01 324.96V216.19"/><path d="M381.38 267.57v6M409.24 267.57v6M392.01 324.96h6M392.01 216.19h6"/></g>
+<circle cx="395.01" cy="270.57" r="4" fill="#087e8b"><title>confidence-0.7: accuracy 0.795299; average samples 3.770281</title></circle>
+<g stroke="#087e8b" stroke-opacity="0.4"><path d="M384.69 270.57H412.86M398.55 324.96V216.19"/><path d="M384.69 267.57v6M412.86 267.57v6M395.55 324.96h6M395.55 216.19h6"/></g>
+<circle cx="398.55" cy="270.57" r="4" fill="#087e8b"><title>confidence-0.75: accuracy 0.795299; average samples 3.805914</title></circle>
+<g stroke="#087e8b" stroke-opacity="0.4"><path d="M400.81 266.82H430.18M415.27 321.21V212.44"/><path d="M400.81 263.82v6M430.18 263.82v6M412.27 321.21h6M412.27 212.44h6"/></g>
+<circle cx="415.27" cy="266.82" r="4" fill="#087e8b"><title>confidence-0.8: accuracy 0.796816; average samples 3.974223</title></circle>
+<g stroke="#087e8b" stroke-opacity="0.4"><path d="M413.69 264.95H444.19M428.75 319.34V212.44"/><path d="M413.69 261.95v6M444.19 261.95v6M425.75 319.34h6M425.75 212.44h6"/></g>
+<circle cx="428.75" cy="264.95" r="4" fill="#087e8b"><title>confidence-0.85: accuracy 0.797574; average samples 4.109932</title></circle>
+<g stroke="#087e8b" stroke-opacity="0.4"><path d="M417.53 264.95H448.71M432.89 319.34V212.44"/><path d="M417.53 261.95v6M448.71 261.95v6M429.89 319.34h6M429.89 212.44h6"/></g>
+<circle cx="432.89" cy="264.95" r="4" fill="#087e8b"><title>confidence-0.9: accuracy 0.797574; average samples 4.151630</title></circle>
+<g stroke="#087e8b" stroke-opacity="0.4"><path d="M417.53 264.95H448.71M432.89 319.34V212.44"/><path d="M417.53 261.95v6M448.71 261.95v6M429.89 319.34h6M429.89 212.44h6"/></g>
+<circle cx="432.89" cy="264.95" r="4" fill="#087e8b"><title>confidence-0.95: accuracy 0.797574; average samples 4.151630</title></circle>
+<g stroke="#087e8b" stroke-opacity="0.4"><path d="M417.53 264.95H448.71M432.89 319.34V212.44"/><path d="M417.53 261.95v6M448.71 261.95v6M429.89 319.34h6M429.89 212.44h6"/></g>
+<circle cx="432.89" cy="264.95" r="4" fill="#087e8b"><title>confidence-1: accuracy 0.797574; average samples 4.151630</title></circle>
+<polygon points="341.08,233.07 492.39,210.56 492.39,317.46 341.08,343.72" fill="#a65c00" fill-opacity="0.07"/>
+<polyline points="341.08,287.45 492.39,263.07" fill="none" stroke="#a65c00" stroke-width="1.6"/>
+<g stroke="#a65c00" stroke-opacity="0.4"><path d="M330.24 287.45H352.38M341.08 343.72V233.07"/><path d="M330.24 284.45v6M352.38 284.45v6M338.08 343.72h6M338.08 233.07h6"/></g>
+<circle cx="341.08" cy="287.45" r="4" fill="#a65c00"><title>agreement-2: accuracy 0.788476; average samples 3.227445</title></circle>
+<text x="349.08" y="279.45" font-size="12" fill="#a65c00">agreement-2</text>
+<g stroke="#a65c00" stroke-opacity="0.4"><path d="M480.57 263.07H504.37M492.39 317.46V210.56"/><path d="M480.57 260.07v6M504.37 260.07v6M489.39 317.46h6M489.39 210.56h6"/></g>
+<circle cx="492.39" cy="263.07" r="4" fill="#a65c00"><title>agreement-3: accuracy 0.798332; average samples 4.750569</title></circle>
+<text x="500.39" y="255.07" font-size="12" fill="#a65c00">agreement-3</text>
+<polygon points="171.92,384.98 205.14,353.09 230.52,339.97 267.95,321.21 316.53,296.83 357.12,294.91 357.12,411.23 316.53,411.23 267.95,437.53 230.52,458.12 205.14,471.25 171.92,506.88" fill="#9d317b" fill-opacity="0.07"/>
+<polyline points="171.92,444.99 205.14,411.23 230.52,398.10 267.95,379.35 316.53,353.09 357.12,351.22" fill="none" stroke="#9d317b" stroke-width="1.6"/>
+<g stroke="#9d317b" stroke-opacity="0.4"><path d="M165.59 444.99H178.93M171.92 506.88V384.98"/><path d="M165.59 441.99v6M178.93 441.99v6M168.92 506.88h6M168.92 384.98h6"/></g>
+<circle cx="171.92" cy="444.99" r="4" fill="#9d317b"><title>BranchPilot λ=0.15: accuracy 0.724792; average samples 1.524640</title></circle>
+<text x="178.92" y="462.99" font-size="12" fill="#9d317b">λ=0.15</text>
+<g stroke="#9d317b" stroke-opacity="0.4"><path d="M196.85 411.23H213.87M205.14 471.25V353.09"/><path d="M196.85 408.23v6M213.87 408.23v6M202.14 471.25h6M202.14 353.09h6"/></g>
+<circle cx="205.14" cy="411.23" r="4" fill="#9d317b"><title>BranchPilot λ=0.1: accuracy 0.738438; average samples 1.858984</title></circle>
+<text x="212.14" y="429.23" font-size="12" fill="#9d317b">λ=0.1</text>
+<g stroke="#9d317b" stroke-opacity="0.4"><path d="M221.40 398.10H240.16M230.52 458.12V339.97"/><path d="M221.40 395.10v6M240.16 395.10v6M227.52 458.12h6M227.52 339.97h6"/></g>
+<circle cx="230.52" cy="398.10" r="4" fill="#9d317b"><title>BranchPilot λ=0.075: accuracy 0.743745; average samples 2.114481</title></circle>
+<text x="237.52" y="416.10" font-size="12" fill="#9d317b">λ=0.075</text>
+<g stroke="#9d317b" stroke-opacity="0.4"><path d="M258.08 379.35H278.27M267.95 437.53V321.21"/><path d="M258.08 376.35v6M278.27 376.35v6M264.95 437.53h6M264.95 321.21h6"/></g>
+<circle cx="267.95" cy="379.35" r="4" fill="#9d317b"><title>BranchPilot λ=0.05: accuracy 0.751327; average samples 2.491281</title></circle>
+<text x="274.95" y="397.35" font-size="12" fill="#9d317b">λ=0.05</text>
+<g stroke="#9d317b" stroke-opacity="0.4"><path d="M305.68 353.09H327.75M316.53 411.23V296.83"/><path d="M305.68 350.09v6M327.75 350.09v6M313.53 411.23h6M313.53 296.83h6"/></g>
+<circle cx="316.53" cy="353.09" r="4" fill="#9d317b"><title>BranchPilot λ=0.025: accuracy 0.761941; average samples 2.980288</title></circle>
+<text x="323.53" y="371.09" font-size="12" fill="#9d317b">λ=0.025</text>
+<g stroke="#9d317b" stroke-opacity="0.4"><path d="M345.75 351.22H368.80M357.12 411.23V294.91"/><path d="M345.75 348.22v6M368.80 348.22v6M354.12 411.23h6M354.12 294.91h6"/></g>
+<circle cx="357.12" cy="351.22" r="4" fill="#9d317b"><title>BranchPilot λ=0.01: accuracy 0.762699; average samples 3.388931</title></circle>
+<text x="364.12" y="369.22" font-size="12" fill="#9d317b">λ=0.01</text>
+<text x="880.00" y="177.00" font-size="16" font-weight="bold">Committed rule settings</text>
+<text x="880.00" y="208.00" font-size="14" fill="#087e8b">Confidence thresholds</text>
+<text x="880.00" y="233.00" font-size="13" >0.5, 0.55, 0.6, 0.65, 0.67,</text>
+<text x="880.00" y="255.00" font-size="13" >0.7, 0.75, 0.8, 0.85, 0.9,</text>
+<text x="880.00" y="277.00" font-size="13" >0.95, 1.0 (minimum 2)</text>
+<text x="880.00" y="317.00" font-size="14" fill="#a65c00">Agreement streaks: 2, 3</text>
+<text x="880.00" y="357.00" font-size="14" fill="#9d317b">Learned λ: all reported</text>
+<text x="880.00" y="382.00" font-size="13" >0.01, 0.025, 0.05,</text>
+<text x="880.00" y="404.00" font-size="13" >0.075, 0.1, 0.15</text>
+<text x="880.00" y="449.00" font-size="13" >Bands: accuracy intervals</text>
+<text x="880.00" y="472.00" font-size="13" >Whiskers: both axes</text>
+<text x="880.00" y="495.00" font-size="13" >Marginal, not simultaneous</text>
+<text x="880.00" y="541.00" font-size="13" >All rules plotted; some</text>
+<text x="880.00" y="564.00" font-size="13" >confidence points overlap.</text>
+<text x="55.00" y="732.00" font-size="14" >One model / one task / one generation seed. Lines guide the eye; they are not additional measurements.</text>
+<text x="55.00" y="758.00" font-size="13" >No new inference or training. Exact values, intervals and checksums: benchmarks/gsm8k-sampling-bootstrap.json</text>
+</g></svg>
