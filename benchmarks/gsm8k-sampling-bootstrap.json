@@ -35,8 +35,8 @@
   ],
   "generator": {
     "path": "tools/plot_sampling_tradeoff.py",
-    "bytes": 19906,
-    "sha256": "4eff20b9207c83fc8db728b2665f1024058ac99913780c303bcf3a21c55d6a54"
+    "bytes": 21724,
+    "sha256": "da6ffe44c9e41d053b6031a15272f7db7a061d30e987d57c87fd8cb219b8256e"
   },
   "software": {
     "numpy": "2.5.2"

@@ -33,16 +33,21 @@ def small_payload():
     for name in names:
         counts = [int(name[6:])] * 4 if name.startswith("fixed-") else [1, 2, 3, 4]
         item = {
-            "policy": name, "uids": ["a", "b", "c", "d"],
-            "correct": [True, False, True, False], "samples": counts,
+            "policy": name,
+            "uids": ["a", "b", "c", "d"],
+            "correct": [True, False, True, False],
+            "samples": counts,
         }
         outcomes.append(item)
-        rows.append({
-            "policy": name, "accuracy": 0.5, "average_samples": sum(counts) / 4,
-            "scoring_cost": 0.05,
-        })
-    return {"records": 4, "costs": [0.05], "policy_outcomes": outcomes,
-            "rows": rows}, evaluation
+        rows.append(
+            {
+                "policy": name,
+                "accuracy": 0.5,
+                "average_samples": sum(counts) / 4,
+                "scoring_cost": 0.05,
+            }
+        )
+    return {"records": 4, "costs": [0.05], "policy_outcomes": outcomes, "rows": rows}, evaluation
 
 
 def test_extraction_aligns_reordered_uids():
