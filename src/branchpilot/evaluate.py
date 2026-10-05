@@ -398,6 +398,13 @@ def benchmark(
     bootstrap_seed: int = 0,
     frozen_baselines: Mapping[float, str] | None = None,
 ) -> BenchmarkResult:
+    """Replay observed-prefix strategies and score against logged gold answers.
+
+    Prefix replay measures performance on a fixed response bank, not optimality
+    of stopping decisions or the cost and latency of live sequential serving.
+    Without frozen_baselines, comparator selection uses these same evaluation
+    outcomes and is exploratory.
+    """
     if not rollouts:
         raise ValueError("benchmark requires at least one rollout")
     costs = tuple(float(cost) for cost in costs)

@@ -9,6 +9,13 @@ version and is listed under **Changed** or **Removed** with the exact migration 
 
 ### Changed
 
+- Rewrote the README around the sequential sampling loop and the negative GSM8K
+  learned-policy result; kept earlier usage and study instructions in `docs/earlier-usage.md`.
+- Documented the runtime, strategies, learner, and evaluator as the core, and gateway,
+  pricing, audit, importers, cache analysis, and persistence as secondary tools.
+- Clarified that backward Q targets are exact along each logged trajectory, not a
+  guarantee of optimal stopping from observable prefixes.
+
 - **BREAKING — `branchpilot audit` now performs a spend audit.** The trajectory-integrity
   profiler that previously answered to `audit` is now `integrity`. It is the same command with
   the same flags and behavior; only the name changed. There is deliberately no alias and no
@@ -29,13 +36,17 @@ version and is listed under **Changed** or **Removed** with the exact migration 
 
 ### Added
 
+- CPU-only accuracy/sample trade-off figure from committed GSM8K prompt outcomes,
+  with all fixed counts, confidence thresholds, agreement streaks, and learned costs.
+  The committed script recomputes paired prompt-bootstrap intervals and writes a
+  numeric summary for test and validation; this is not a new model run.
 - `branchpilot audit LOGS` — reads existing provider traffic logs and reports where compute is
   being spent, with per-lever opportunities and ranges. Runs offline with no flags, no account,
   and no network access.
 - Traffic log ingestion for six formats (OpenAI, Anthropic, LiteLLM, Helicone, OpenRouter, and a
-  mapped generic JSONL). **Prompt and completion text is hashed and discarded on read**, so the
-  audit is safe to run against production logs without a data-handling review. Peak memory is
-  independent of file size.
+  mapped generic JSONL). Prompt and completion text is hashed and discarded on read.
+  This keeps less text in memory; hashing alone does not establish that a log is safe
+  to handle or that a deployment needs no data-handling review.
 - Price book with exact `Decimal` arithmetic and per-entry source URLs and effective dates. An
   unknown model raises with close-match suggestions rather than estimating from a similar model.
 - Provider request/response translation for Anthropic, Gemini, and Bedrock alongside OpenAI. Each
@@ -48,8 +59,8 @@ version and is listed under **Changed** or **Removed** with the exact migration 
   `MIGRATION-NOTES.md`; a literal secret in the source config is refused rather than copied.
 - Async persistence layer for the ledger, cache metadata, batch state, and rate-limit buckets.
   SQLite is the default and requires no external service; Postgres is available behind an extra.
-- Safety-net enforcement harness: a lever cannot be marked serve-eligible while any of its known
-  failure modes is unclosed. Shipping a footgun is a failing test rather than a judgement call.
+- Safety-net enforcement tests cover declared failure modes and reject configurations
+  whose recorded modes have not been addressed. They do not prove deployment safety.
 - Leakage suite asserting that inbound keys, upstream keys, upstream hosts, upstream model names,
   prompts, and completions never appear in any response body, header, log record, metric label,
   or exception representation.
@@ -71,8 +82,8 @@ version and is listed under **Changed** or **Removed** with the exact migration 
 
 ### Evidence
 
-- Canonical v0.2 learned-policy criterion published as an explicit **FAIL**.
-- Train-only v3 capacity gate published as an explicit **NO-GO**; no fresh holdout was authorized
+- The v0.2 learned-policy success criterion was not met.
+- The train-only v3 capacity comparison did not pass; no fresh holdout was authorized
   and zero fresh-holdout model requests were issued.
 
 [Unreleased]: https://github.com/mottopanikeiku/branchpilot/compare/v0.3.0...HEAD

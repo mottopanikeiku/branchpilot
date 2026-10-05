@@ -77,7 +77,12 @@ def _validate_config(config: TrainConfig) -> tuple[float, ...]:
 
 
 def _exact_q_targets(stop_rewards: np.ndarray, cost: float) -> np.ndarray:
-    """Solve one fully observed finite-horizon trajectory by backward induction."""
+    """Compute pathwise STOP/CONTINUE targets from one complete logged trajectory.
+
+    Backward induction uses logged future rewards, not their expectation given
+    the observed prefix. These targets do not establish an optimal stopping
+    policy that must decide without seeing future samples.
+    """
     targets = np.empty((len(stop_rewards), 2), dtype=np.float32)
     targets[:, 0] = stop_rewards
     targets[-1, 1] = stop_rewards[-1]
@@ -169,7 +174,11 @@ def _export_weights(network: _QNetwork) -> dict[str, np.ndarray]:
 def train_policy(
     rollouts: list[Rollout], config: TrainConfig | None = None
 ) -> tuple[BranchPilotPolicy, dict[str, Any]]:
-    """Fit one universal Q approximator to exact offline backward-induction targets."""
+    """Regress a cost-conditioned Q model onto pathwise logged-trajectory targets.
+
+    Inputs contain observed-prefix features; targets can use logged future
+    rewards. Fitting them does not guarantee optimal observed-prefix decisions.
+    """
     config = config or TrainConfig()
     if not rollouts:
         raise ValueError("training requires at least one rollout")
