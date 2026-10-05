@@ -125,7 +125,11 @@ def _project_nonincreasing(values: np.ndarray) -> np.ndarray:
 
 
 class BranchPilotPolicy:
-    """Torch-free inference for a cost-conditioned BranchPilot Q-policy."""
+    """Torch-free inference for a cost-conditioned model of pathwise Q targets.
+
+    Decisions use only the observed prefix. Training targets can use logged
+    future rewards and do not guarantee optimal observed-prefix stopping.
+    """
 
     def __init__(
         self,
