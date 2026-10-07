@@ -156,7 +156,7 @@ def test_bank_validation_enforces_protocol_and_parser(tmp_path, protocol, change
     elif change == "unparsed":
         first["metadata"].pop("answer_correctness")
     elif change == "count":
-        first["samples"].pop()
+        first["samples"] = first["samples"][:-1]
     records = [Rollout.from_dict(first)]
     if change != "missing":
         records.append(Rollout.from_dict(second))
@@ -367,6 +367,10 @@ def test_test_command_loads_both_policies_without_retraining(tmp_path, protocol,
     assert "N=1,319" in svg and "N=200" in svg
     assert "Separate accuracy scales" in svg
     assert "GSM8K transfer" in svg
+    monkeypatch.setattr(study, "select", lambda *_: pytest.fail("plot must not retrain"))
+    monkeypatch.setattr(study, "test", lambda *_: pytest.fail("plot must not evaluate"))
+    assert study.main(["--root", str(tmp_path), "plot"]) == 0
+    assert (tmp_path / "assets/math500-generalization.svg").read_text() == svg
 
 
 def test_cli_prohibits_epochs_override():

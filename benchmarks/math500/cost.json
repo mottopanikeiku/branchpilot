@@ -1,0 +1,19 @@
+{
+  "currency": "USD",
+  "gpu": "L4",
+  "cpu_cores": 2,
+  "memory_gib": 8,
+  "hourly_rates": {"gpu": 0.7992, "cpu_core": 0.04716, "memory_gib": 0.007992},
+  "pilot_active_cloud_minutes": 2.1033944143833336,
+  "bank_active_cloud_minutes": 19.81129702595,
+  "active_cloud_estimate_usd": 0.3497058801282632,
+  "pilot_client_wall_minutes": 3.61,
+  "bank_client_wall_minutes": 20.54,
+  "completed_runs_conservative_estimate_usd": 0.4239,
+  "canceled_start_reserved_usd": 0.0878,
+  "total_conservative_budget_accounting_usd": 0.5117,
+  "allocation_usd": 2.5,
+  "basis": "Active estimates use remote function duration and listed L4/CPU/memory rates. Conservative completed-run estimates use client wall time and a 10% margin, including startup overhead. One canceled pilot start retains its full five-minute reservation. These are estimates and budget reservations, not a Modal invoice.",
+  "sources": ["pilot-manifest.json", "generation-manifest.json", "https://modal.com/pricing"],
+  "local_timing_claims": false
+}

@@ -602,13 +602,23 @@ def main(argv: list[str] | None = None) -> int:
     selection.add_argument("--preregistration-commit", default="d475eeb")
     testing = commands.add_parser("test", help="evaluate after committing selection.json")
     testing.add_argument("--selection-commit", required=True)
+    commands.add_parser("plot", help="redraw the SVG from committed results without evaluation")
     args = parser.parse_args(argv)
     root = args.root.resolve()
-    output = (
-        select(root, args.preregistration_commit)
-        if args.command == "select"
-        else test(root, args.selection_commit)
-    )
+    if args.command == "select":
+        output = select(root, args.preregistration_commit)
+    elif args.command == "test":
+        output = test(root, args.selection_commit)
+    else:
+        destination = root / "assets/math500-generalization.svg"
+        destination.write_text(
+            render_svg(
+                read_json(root / "benchmarks/gsm8k-sampling-bootstrap.json"),
+                read_json(root / BANK / "result.json"),
+            ),
+            encoding="utf-8",
+        )
+        output = {"command": "plot", "figure": destination.relative_to(root).as_posix()}
     print(json.dumps(output, ensure_ascii=False, allow_nan=False, separators=(",", ":")))
     return 0
 
