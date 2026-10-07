@@ -38,6 +38,10 @@ build = [
 train = [
   "torch>=2.6,<3",
 ]
+math = [
+  "math-verify==0.8.0",
+  "antlr4-python3-runtime==4.13.2",
+]
 dev = [
   "fastapi==0.141.1",
   "hatchling==1.32.0",

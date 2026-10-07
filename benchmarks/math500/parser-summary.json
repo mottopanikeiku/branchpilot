@@ -1,0 +1,87 @@
+{
+  "gold": "LatexExtractionConfig(); fallback_mode=no_fallback; $gold_latex$",
+  "package_versions": {
+    "antlr4-python3-runtime": "4.13.2",
+    "latex2sympy2-extended": "1.10.2",
+    "math-verify": "0.8.0",
+    "sympy": "1.14.0"
+  },
+  "parsed_bank_bytes": {
+    "test": 451744,
+    "train": 455320,
+    "validation": 238818
+  },
+  "parsed_bank_sha256": {
+    "test": "393326c912ad671520a522b47f453d57441b7f9d5fcca5dc12c3f1c3611150e1",
+    "train": "aa6e129a08674d236ade7d89904a8f716a2194ed2466769bdf53653181cc716d",
+    "validation": "b7b3175f846eca7723aa2a412d380c064cba7fbc5a68603cdf292d68564038a7"
+  },
+  "parser": "math-verify-0.8.0",
+  "prediction": "LatexExtractionConfig(boxed_match_priority=0); fallback_mode=no_fallback",
+  "raw_bank_sha256": {
+    "test": "c1cf2aa133ec79693e9c1e44cd8b26108dfd6cda584299b7a2742fd153d96a9c",
+    "train": "810df509e7ee4f99365761afbab14ac441ea877cb5faf6d70cddf30a24eabeae",
+    "validation": "01b05fe241b3a06bf7228f58a3e05dad9acc6c23537cf27bac8ab17d3cd97f97"
+  },
+  "schema": 1,
+  "splits": {
+    "test": {
+      "correct_equivalence_classes": 157,
+      "equivalence_classes": 600,
+      "equivalent_samples_joined": 804,
+      "gold_parsed": 200,
+      "parse_status_counts": {
+        "parsed_explicit": 1404,
+        "truncated": 194,
+        "unparsed": 2
+      },
+      "parsed_samples": 1404,
+      "problems": 200,
+      "samples": 1600
+    },
+    "train": {
+      "correct_equivalence_classes": 155,
+      "equivalence_classes": 638,
+      "equivalent_samples_joined": 779,
+      "gold_parsed": 200,
+      "parse_status_counts": {
+        "parsed_explicit": 1417,
+        "truncated": 180,
+        "unparsed": 3
+      },
+      "parsed_samples": 1417,
+      "problems": 200,
+      "samples": 1600
+    },
+    "validation": {
+      "correct_equivalence_classes": 77,
+      "equivalence_classes": 322,
+      "equivalent_samples_joined": 390,
+      "gold_parsed": 100,
+      "parse_status_counts": {
+        "parsed_explicit": 712,
+        "truncated": 86,
+        "unparsed": 2
+      },
+      "parsed_samples": 712,
+      "problems": 100,
+      "samples": 800
+    }
+  },
+  "status": "complete",
+  "totals": {
+    "correct_equivalence_classes": 389,
+    "equivalence_classes": 1560,
+    "equivalent_samples_joined": 1973,
+    "gold_parsed": 500,
+    "parse_status_counts": {
+      "parsed_explicit": 3533,
+      "truncated": 460,
+      "unparsed": 7
+    },
+    "parsed_samples": 3533,
+    "problems": 500,
+    "samples": 4000
+  },
+  "votes": "symmetric verification against first matching earlier representative"
+}

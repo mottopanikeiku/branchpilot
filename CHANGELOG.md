@@ -36,6 +36,18 @@ version and is listed under **Changed** or **Removed** with the exact migration 
 
 ### Added
 
+- MATH-500 response collection on a pinned vLLM image and L4, with committed
+  problem splits and the stopping-policy success rule fixed before sampling.
+- Symbolic answer voting with Math-Verify. Vote labels depend only on answers
+  already sampled; correctness labels remain separate from policy features.
+- The original GSM8K learned policy is included unchanged for transfer comparisons.
+- A second negative stopping result on 200 internally held-out MATH-500 problems.
+  The retrained policy missed the unchanged success rule at all three primary
+  costs; committed outcomes also compare the unchanged GSM8K controller and
+  simple rules at matched expected sample budgets.
+- Source distributions now exclude all `.venv*` directories, including the
+  workflow's temporary Torch-free environment.
+
 - CPU-only accuracy/sample trade-off figure from committed GSM8K prompt outcomes,
   with all fixed counts, confidence thresholds, agreement streaks, and learned costs.
   The committed script recomputes paired prompt-bootstrap intervals and writes a

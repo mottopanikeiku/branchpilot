@@ -22,34 +22,36 @@ jobs:
         with:
           enable-cache: true
           python-version: ${{ matrix.python }}
-      - name: Install locked training environment
-        run: uv sync --locked --extra dev
+      - name: Install locked training and math environment
+        run: uv sync --locked --extra dev --extra math
       - name: Lint
         if: matrix.python == '3.14'
-        run: uv run ruff check .
+        run: uv run --extra dev --extra math ruff check .
       - name: Check formatting
         if: matrix.python == '3.14'
-        run: uv run ruff format --check .
+        run: uv run --extra dev --extra math ruff format --check .
       - name: Test
-        run: uv run pytest tests
+        run: uv run --extra dev --extra math pytest tests
       - name: Test its-hub integration
         if: matrix.python == '3.14'
-        run: uv run --extra its-hub pytest tests/test_its_hub_integration.py
+        run: uv run --extra dev --extra math --extra its-hub pytest tests/test_its_hub_integration.py
       - name: Verify evidence checksums
         if: matrix.python == '3.14'
         run: (cd benchmarks && sha256sum -c checksums-v2.txt && sha256sum -c checksums-v3-development.txt)
       - name: Smoke test CLI
         if: matrix.python == '3.14'
         run: >-
-          uv run branchpilot quickstart
+          uv run --extra dev --extra math branchpilot quickstart
           --output-dir artifacts/ci
           --train-size 64
           --validation-size 32
           --test-size 32
           --epochs 8
-      - name: Import pinned Modal application
+      - name: Import pinned Modal applications
         if: matrix.python == '3.14'
-        run: uv run --extra modal python -c "import modal_app"
+        run: >-
+          uv run --extra dev --extra math --extra modal python -c
+          "import modal_app; import runpy; runpy.run_path('tools/collect_math500.py')"
 
   package:
     name: Torch-free wheel
