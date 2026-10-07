@@ -54,9 +54,7 @@ def test_equivalent_fractions_vote_together(math_verify) -> None:
 
 
 def test_symbolic_nonnumeric_answer_is_scored(math_verify) -> None:
-    parsed = answers.parse_rollout(
-        raw_rollout(r"$\boxed{x+1}$", r"$\boxed{1+x}$", gold="x+1")
-    )
+    parsed = answers.parse_rollout(raw_rollout(r"$\boxed{x+1}$", r"$\boxed{1+x}$", gold="x+1"))
     assert parsed.samples[0].answer == parsed.samples[1].answer == "math-answer-0"
     assert prefix_correct(parsed, 2)
 
@@ -95,7 +93,9 @@ def test_labels_do_not_depend_on_future_samples_or_gold(math_verify) -> None:
     )
 
 
-def test_grouping_is_symmetric_and_uses_only_first_representatives(math_verify, monkeypatch) -> None:
+def test_grouping_is_symmetric_and_uses_only_first_representatives(
+    math_verify, monkeypatch
+) -> None:
     calls = []
 
     def parse(text, **kwargs):
@@ -142,7 +142,10 @@ def test_truncated_incomplete_and_unparsed_outputs_do_not_vote(math_verify) -> N
     )
     parsed = answers.parse_rollout(raw)
     assert [sample.parse_status for sample in parsed.samples] == [
-        "truncated", "incomplete", "incomplete", "unparsed"
+        "truncated",
+        "incomplete",
+        "incomplete",
+        "unparsed",
     ]
     assert all(sample.answer is None for sample in parsed.samples)
     assert parsed.metadata["answer_correctness"] == {}
@@ -171,7 +174,10 @@ def test_correctness_metadata_never_changes_observable_features() -> None:
         np.testing.assert_array_equal(
             prefix_state(base, count).features, prefix_state(changed, count).features
         )
-        assert prefix_state(base, count).majority_answer == prefix_state(changed, count).majority_answer
+        assert (
+            prefix_state(base, count).majority_answer
+            == prefix_state(changed, count).majority_answer
+        )
         assert prefix_correct(base, count)
         assert not prefix_correct(changed, count)
     measurement = _measure([base], lambda rollout: 2, "fixed-2", "fixed", 0.05, np.array([[0]]))

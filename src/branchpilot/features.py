@@ -129,5 +129,7 @@ def prefix_state(rollout: Rollout, count: int, max_samples: int | None = None) -
 def prefix_correct(rollout: Rollout, count: int) -> bool:
     answer = prefix_state(rollout, count).majority_answer
     if "answer_correctness" in rollout.metadata:
-        return answer is not None and rollout.metadata["answer_correctness"].get(answer, False) is True
+        return (
+            answer is not None and rollout.metadata["answer_correctness"].get(answer, False) is True
+        )
     return answer == rollout.gold

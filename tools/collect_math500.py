@@ -20,14 +20,18 @@ IMAGE = (
     "sha256:607442e407b0fea97f8a132a78b787c121a996dd4de181fa08e8da06e71ec2db"
 )
 app = modal.App("branchpilot-math500")
-image = modal.Image.from_registry(IMAGE).run_commands(
-    "ln -sf /usr/bin/python3 /usr/bin/python"
-).entrypoint([])
+image = (
+    modal.Image.from_registry(IMAGE)
+    .run_commands("ln -sf /usr/bin/python3 /usr/bin/python")
+    .entrypoint([])
+)
 TIMEOUT = int(os.environ.get("BRANCHPILOT_CLOUD_TIMEOUT", "300"))
 
 
 def encode(records: list[dict]) -> bytes:
-    payload = "".join(json.dumps(row, separators=(",", ":"), sort_keys=True) + "\n" for row in records)
+    payload = "".join(
+        json.dumps(row, separators=(",", ":"), sort_keys=True) + "\n" for row in records
+    )
     return gzip.compress(payload.encode(), compresslevel=9, mtime=0)
 
 
@@ -113,8 +117,11 @@ def collect(protocol: dict, protocol_sha256: str, generation_commit: str, pilot:
                             ),
                             "finish_reason": finish,
                             "parse_status": (
-                                "truncated" if finish == "length" else "unparsed"
-                                if finish == "stop" else "incomplete"
+                                "truncated"
+                                if finish == "length"
+                                else "unparsed"
+                                if finish == "stop"
+                                else "incomplete"
                             ),
                         }
                     )
@@ -153,7 +160,9 @@ def collect(protocol: dict, protocol_sha256: str, generation_commit: str, pilot:
             "compressed_bytes": len(bank),
             "raw_bank_sha256": hashlib.sha256(bank).hexdigest(),
             "finish_reasons": {
-                reason: sum(sample["finish_reason"] == reason for row in rows for sample in row["samples"])
+                reason: sum(
+                    sample["finish_reason"] == reason for row in rows for sample in row["samples"]
+                )
                 for reason in ("stop", "length", "unknown")
             },
         }
@@ -180,8 +189,13 @@ def collect(protocol: dict, protocol_sha256: str, generation_commit: str, pilot:
             "startup_seconds": startup_seconds,
             "cloud_seconds": cloud_seconds,
             "cloud_minutes": cloud_seconds / 60,
-            "cloud_cost_estimate_usd": cloud_seconds / 3600 * (0.7992 + 2 * 0.047160 + 8 * 0.007992),
-            "cost_estimate_basis": "L4, two CPU cores and 8 GiB at published hourly rates; excludes image build and client overhead",
+            "cloud_cost_estimate_usd": cloud_seconds
+            / 3600
+            * (0.7992 + 2 * 0.047160 + 8 * 0.007992),
+            "cost_estimate_basis": (
+                "L4, two CPU cores and 8 GiB at published hourly rates; "
+                "excludes image build and client overhead"
+            ),
             "splits": metrics,
         },
     }
