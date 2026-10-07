@@ -7,7 +7,7 @@ from typing import Any, overload
 
 import numpy as np
 
-from branchpilot.features import prefix_state
+from branchpilot.features import prefix_correct
 from branchpilot.policy import BranchPilotPolicy, Decision
 from branchpilot.schema import Rollout
 from branchpilot.strategies import (
@@ -257,8 +257,7 @@ def _measure(
     for rollout in rollouts:
         horizon = min(len(rollout.samples), max_samples or len(rollout.samples))
         count = max(1, min(horizon, int(rule(rollout))))
-        answer = prefix_state(rollout, count, horizon).majority_answer
-        correct.append(float(answer == rollout.gold))
+        correct.append(float(prefix_correct(rollout, count)))
         counts.append(count)
         tokens.append(sum(sample.token_count for sample in rollout.samples[:count]))
 

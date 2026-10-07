@@ -22,8 +22,8 @@ jobs:
         with:
           enable-cache: true
           python-version: ${{ matrix.python }}
-      - name: Install locked training environment
-        run: uv sync --locked --extra dev
+      - name: Install locked training and math environment
+        run: uv sync --locked --extra dev --extra math
       - name: Lint
         if: matrix.python == '3.14'
         run: uv run ruff check .
