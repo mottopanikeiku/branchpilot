@@ -229,6 +229,7 @@ def test_cli_application_preserves_text_hashes_and_refuses_reapplication(
         assert encoded[4:8] == bytes(4)
         assert summary["raw_bank_sha256"][split] == hashlib.sha256(originals[split]).hexdigest()
         assert summary["parsed_bank_sha256"][split] == hashlib.sha256(encoded).hexdigest()
+        assert summary["parsed_bank_bytes"][split] == len(encoded)
         restored = read_jsonl_bytes(gzip.decompress(encoded))
         assert restored[0].samples[0].text == raw.samples[0].text
         assert answers.compressed_bank(restored) == encoded

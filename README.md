@@ -6,7 +6,7 @@ BranchPilot uses a learned value function to decide whether one more LLM answer 
 
 I built a sequential sampling loop, a small cost-conditioned MLP, and an evaluator that replays every rule on the same response bank. The core is [`runtime.py`](src/branchpilot/runtime.py), [`training.py`](src/branchpilot/training.py), and [`evaluate.py`](src/branchpilot/evaluate.py).
 
-**The negative result extends to a second benchmark.** My learned rule failed its fixed success criterion on the full GSM8K test and on an internal MATH-500 holdout. On MATH, retraining improved over transferring the old controller, but neither established an advantage over simple rules. This is one small model and one generation seed, not a general impossibility result.
+**The negative result extends to a second benchmark.** My learned rule failed its fixed success criterion on the full GSM8K test and on an internal MATH-500 holdout. On MATH, retraining improved the observed utility over transferring the old controller, but neither established an advantage over simple rules. This is one small model and one generation seed, not a general impossibility result.
 
 ![Stopping accuracy and sample count on GSM8K and an internal MATH-500 holdout](assets/math500-generalization.svg)
 
