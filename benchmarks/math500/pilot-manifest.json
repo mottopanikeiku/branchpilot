@@ -1,0 +1,66 @@
+{
+  "protocol_sha256": "49de2b801500c854d6129871fa6d4f757b8854312762aa6c5b165924dec2dff2",
+  "generation_commit": "3cd30f8bf38db885e4c3179b6d8b7aafdd058c7f",
+  "pilot": true,
+  "dataset": {
+    "id": "HuggingFaceH4/MATH-500",
+    "revision": "6e4ed1a2a79af7d8630a6b768ec859cb5af4d3be",
+    "url": "https://huggingface.co/datasets/HuggingFaceH4/MATH-500/resolve/6e4ed1a2a79af7d8630a6b768ec859cb5af4d3be/test.jsonl",
+    "sha256": "35dc41080a3680858b27fa7e0533d2d547825316fc5dafe5d316f4ccc5a06132",
+    "license": "Original MATH repository: MIT, Copyright 2021 Dan Hendrycks. MATH-500 selection: OpenAI PRM800K MIT, Copyright 2023 OpenAI. The Hugging Face mirror does not declare a separate license.",
+    "rows": 500
+  },
+  "model": {
+    "id": "Qwen/Qwen2.5-1.5B-Instruct",
+    "revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+    "role": "primary"
+  },
+  "sampling": {
+    "samples_per_prompt": 8,
+    "max_tokens": 1024,
+    "temperature": 0.7,
+    "top_p": 0.95,
+    "logprobs": 1,
+    "seed": 17,
+    "max_model_len": 4096,
+    "system_prompt": "Please reason step by step, and put your final answer within \\boxed{}.",
+    "pilot_indices": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "pilot_is_separate": true
+  },
+  "runtime": {
+    "image": "vllm/vllm-openai:v0.10.2@sha256:607442e407b0fea97f8a132a78b787c121a996dd4de181fa08e8da06e71ec2db",
+    "gpu": "NVIDIA L4",
+    "gpu_type": "L4",
+    "vllm": "0.10.2",
+    "torch": "2.8.0+cu128",
+    "cuda": "12.8",
+    "cpu_cores": 2,
+    "memory_gib": 8
+  },
+  "startup_seconds": 103.328072183,
+  "cloud_seconds": 126.20366486300001,
+  "cloud_minutes": 2.1033944143833336,
+  "cloud_cost_estimate_usd": 0.03356512670696349,
+  "cost_estimate_basis": "L4, two CPU cores and 8 GiB at published hourly rates; excludes image build and client overhead",
+  "splits": {
+    "pilot": {
+      "records": 4,
+      "samples": 32,
+      "completion_tokens": 15853,
+      "generation_seconds": 22.872550286000006,
+      "completion_tokens_per_second": 693.1015475656607,
+      "compressed_bytes": 7336,
+      "raw_bank_sha256": "95fb8a64afdd595cb90bf277ce3dad3a68b0ac46460833bc27970dd24eeb7cea",
+      "finish_reasons": {
+        "stop": 32,
+        "length": 0,
+        "unknown": 0
+      }
+    }
+  }
+}

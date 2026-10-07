@@ -61,6 +61,20 @@ def test_symbolic_nonnumeric_answer_is_scored(math_verify) -> None:
     assert prefix_correct(parsed, 2)
 
 
+@pytest.mark.parametrize(
+    "text",
+    ("Evelyn", "east", "even", "(C)", "(E)", "(B)", "ellipse", "Navin"),
+)
+def test_dataset_textual_gold_is_parsed_without_fallback(math_verify, text: str) -> None:
+    gold = rf"\text{{{text}}}"
+    prediction = rf"$\boxed{{{gold}}}$"
+    parsed = answers.parse_rollout(raw_rollout(prediction, prediction, gold=gold))
+    assert parsed.samples[0].answer == parsed.samples[1].answer == "math-answer-0"
+    assert parsed.samples[0].parse_status == "parsed_explicit"
+    assert parsed.metadata["answer_correctness"] == {"math-answer-0": True}
+    assert prefix_correct(parsed, 2)
+
+
 def test_labels_do_not_depend_on_future_samples_or_gold(math_verify) -> None:
     raw = raw_rollout(r"$\boxed{2}$", r"$\boxed{\frac{1}{2}}$", gold="2")
     short = answers.parse_rollout(raw)
