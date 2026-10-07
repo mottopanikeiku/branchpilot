@@ -191,6 +191,7 @@ def apply_banks(input_dir: Path) -> dict[str, Any]:
     summary.update(
         status="complete",
         parsed_bank_sha256={split: hashlib.sha256(encoded[split]).hexdigest() for split in SPLITS},
+        parsed_bank_bytes={split: len(encoded[split]) for split in SPLITS},
         splits={split: _counts(parsed_banks[split]) for split in SPLITS},
         totals=_counts([rollout for split in SPLITS for rollout in parsed_banks[split]]),
     )

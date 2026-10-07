@@ -1,57 +1,71 @@
 # BranchPilot
 
-BranchPilot decides whether to request another LLM answer or stop and return an answer already observed.
+BranchPilot uses a learned value function to decide whether one more LLM answer is worth its sample cost.
 
-**Question:** can a learned stopping rule use fewer samples than fixed-count self-consistency without losing accuracy?
+**Question:** can I improve the accuracy–sampling trade-off beyond simple self-consistency stopping rules?
 
-The loop requests one sample, updates answer-vote features, and asks a strategy to STOP or CONTINUE. [`runtime.py`](src/branchpilot/runtime.py) runs it; [`training.py`](src/branchpilot/training.py) fits a small cost-conditioned MLP; [`evaluate.py`](src/branchpilot/evaluate.py) compares fixed, agreement, confidence, and learned rules on the same prompts.
+I built a sequential sampling loop, a small cost-conditioned MLP, and an evaluator that replays every rule on the same response bank. The core is [`runtime.py`](src/branchpilot/runtime.py), [`training.py`](src/branchpilot/training.py), and [`evaluate.py`](src/branchpilot/evaluate.py).
 
-**Result: the learned rule did not meet the GSM8K success criterion.** It improved some fixed-count trade-offs, but simple agreement was stronger at low sample cost. This is one model on one task, not evidence of general learned-policy superiority.
+**The negative result extends to a second benchmark.** My learned rule failed its fixed success criterion on the full GSM8K test and on an internal MATH-500 holdout. On MATH, retraining improved over transferring the old controller, but neither established an advantage over simple rules. This is one small model and one generation seed, not a general impossibility result.
 
-![GSM8K accuracy versus average samples per prompt, with prompt-bootstrap uncertainty](assets/gsm8k-sampling-bootstrap.svg)
+![Stopping accuracy and sample count on GSM8K and an internal MATH-500 holdout](assets/math500-generalization.svg)
 
-## What the experiment shows
+## Results
 
-The [generation manifest](benchmarks/manifest-v2.json) records Qwen2.5-1.5B-Instruct on an NVIDIA L4 with vLLM 0.10.2: 1,600 training prompts, 400 validation prompts, and the full 1,319-prompt GSM8K test; eight samples per prompt, 26,552 samples total. Comparator choices came from validation, before test evaluation.
+Both studies use Qwen2.5-1.5B-Instruct and eight samples per problem. GSM8K has **1,319 official test problems**. For MATH-500, I fixed a new **200 train / 100 validation / 200 test** partition; this is **not** a full official MATH-500 test score.
 
-| Rule | Test accuracy | Average samples |
+| Benchmark | Rule | Accuracy | Mean samples |
+|---|---|---:|---:|
+| GSM8K | Fixed one | 68.8% | 1.00 |
+| GSM8K | Learned, λ = 0.05 | 75.1% | 2.49 |
+| GSM8K | Two consecutive matching answers | 78.8% | 3.23 |
+| GSM8K | Fixed eight | 80.1% | 8.00 |
+| MATH holdout | Fixed one | 55.0% | 1.00 |
+| MATH holdout | MATH-trained, λ = 0.05 | 58.5% | 3.35 |
+| MATH holdout | GSM8K transfer, λ = 0.05 | 58.0% | 4.61 |
+| MATH holdout | Two consecutive matching answers | 62.5% | 4.33 |
+| MATH holdout | Fixed eight | 62.5% | 8.00 |
+
+Sources: [GSM8K prompt-bootstrap summary](benchmarks/gsm8k-sampling-bootstrap.json) and [MATH results](benchmarks/math500/result.json), with [per-prompt outcomes](benchmarks/math500/outcomes.json.gz).
+
+The objective is **accuracy − λ × (samples − 1)**; λ is not a dollar price. I retained the original success rule: the paired utility interval must have a positive lower bound at two primary costs and a nonnegative bound at the third. The [MATH protocol](benchmarks/math500-protocol.json) was committed at [d475eeb](https://github.com/mottopanikeiku/branchpilot/commit/d475eeb) before sampling. I committed the [validation-selected comparators](benchmarks/math500/selection.json) at [29eea90](https://github.com/mottopanikeiku/branchpilot/commit/29eea90) before evaluating test decisions.
+
+Validation selected fixed-one at all three primary costs. The new policy lost utility on the holdout:
+
+| λ | Learned − comparator utility | Paired 95% interval |
 |---|---:|---:|
-| Fixed one | 68.8% | 1.00 |
-| Learned, λ = 0.15 | 72.5% | 1.52 |
-| Fixed three | 74.5% | 3.00 |
-| Learned, λ = 0.025 | 76.2% | 2.98 |
-| Two consecutive matching answers | 78.8% | 3.23 |
-| Fixed eight | 80.1% | 8.00 |
+| 0.05 | −0.0825 | [−0.1278, −0.0373] |
+| 0.075 | −0.1048 | [−0.1440, −0.0659] |
+| 0.10 | −0.0955 | [−0.1375, −0.0550] |
 
-Source: [committed test outcomes](benchmarks/gsm8k-v2.json). The objective is accuracy minus λ times additional samples; λ is not a price in dollars. The [protocol](benchmarks/protocol.json) required positive paired utility lower bounds at two primary costs and a nonnegative bound at the third. The learned policy failed that rule. A later [training-only capacity comparison](benchmarks/gsm8k-v3-capacity.json) also found no candidate that passed its stated criterion.
+I also compared exactly matched **expected** sample budgets. At 3.35 samples, the fixed-three/four mixture scored 59.1% and the fixed-one/agreement mixture 60.3%, versus learned 58.5%. Both paired accuracy intervals crossed zero. These are descriptive comparisons: mixture weights use test counts, not accuracy, and their uncertainty is not included in the intervals.
 
-The figure is a new analysis of the committed per-prompt outcomes, not a new model run. It includes every fixed count, both agreement rules, the confidence grid, and the learned cost settings. Shading and error bars show pointwise prompt-bootstrap uncertainty, not a confidence band for selecting the best rule after looking at test data. The [script](tools/plot_sampling_tradeoff.py) and [numeric summary](benchmarks/gsm8k-sampling-bootstrap.json) retain the method and input hash.
+## What I trained and measured
 
-## What “exact” means here
+Training regresses backward STOP/CONTINUE targets along complete logged trajectories. Those targets use gold and the logged future; they are not an optimal conditional-expectation stopping solution. Inference sees only observed-prefix features. On MATH, symmetric [Math-Verify](https://github.com/huggingface/Math-Verify) checks assign vote labels from earlier responses only; gold correctness stays separate.
 
-Training computes finite-horizon STOP/CONTINUE targets by backward induction along each complete logged trajectory, then regresses those targets on observable-prefix features. **Exact is pathwise:** offline targets can use the particular logged future and gold answer. They do not solve the conditional expectation over future samples or guarantee optimal non-clairvoyant stopping. At inference, the strategy receives only the observed prefix, never the gold answer or future samples.
+I committed [all **4,000 new responses**](benchmarks/math500/generation-manifest.json), full text, both controller artifacts, [generation code](tools/collect_math500.py), and [analysis code](tools/evaluate_math500.py). The [three compressed banks](benchmarks/math500/parser-summary.json) total **1,145,882 bytes**. Generation used vLLM 0.10.2 on one L4: **19.81 active cloud minutes**, plus a separate pilot. [Cost estimates](benchmarks/math500/cost.json) are **$0.35 active cloud use / $0.5117 conservative budget accounting**, including startup and a canceled-start reservation—not an invoice. I retained the [source dataset license notices](benchmarks/math500/LICENSE.txt); the mirror declares no separate license.
 
-Runtime, strategies, learner, and evaluation are the core. Gateway/provider adapters, pricing, traffic audit, importers, cache analysis, and persistence are secondary tools, not evidence for the GSM8K finding. [The code map and earlier detailed usage](docs/core-and-extras.md) separate these paths and link the preserved study instructions.
-
-## Reproduce the figure
-
-From a source checkout, with Python satisfying [the package requirement](pyproject.toml) and `uv`:
+## Reproduce from committed data
 
 ```bash
 uv sync --frozen
-nice -n 19 uv run --frozen python tools/plot_sampling_tradeoff.py
+uv run python tools/evaluate_math500.py plot
+uv run python tools/evaluate_math500.py test --selection-commit 29eea90
 ```
 
-This analysis uses committed data, local CPU, no model download, no GPU, and no paid service. It does not regenerate the original L4 sample bank or retrain the policy. The full rollout text and trained policy are not committed; the historical collection instructions are retained in the linked detailed notes. The original generation's monetary cost is not recorded here.
+These commands redraw and replay the stored study on CPU without model downloads or paid compute. Retraining requires the `train` extra: run `select`, commit its artifacts, then run `test` with that commit. Redrawing responses requires Modal and one L4; the generation script refuses to overwrite an existing bank.
 
 ## Limitations
 
-- One small model, one numeric reasoning task, and one generation seed.
-- Logged, batched response-bank evaluation is not a sequential-serving latency experiment.
-- Sample count is not token use, GPU time, energy, or money.
-- Answer parsing and vote tie-breaking affect both training and evaluation.
-- Pointwise bootstrap intervals do not correct for trying multiple rules on the same test set.
+- One model family, one seed, a small internal holdout, and possible benchmark contamination in pretraining.
+- Symbolic grading can fail or time out; [460 truncated and seven unparsed outputs](benchmarks/math500/parser-summary.json) had no answer label. I kept the original unknown/tie handling.
+- Response-bank replay is not a live sequential-serving or latency experiment.
+- Sample budgets are not token, energy, or dollar budgets.
+- Intervals are pointwise, conditional on this bank and fitted policy, not uncertainty across training/generation seeds.
 
 ## Prior work
 
-This builds on [self-consistency](https://arxiv.org/abs/2203.11171), [Adaptive-Consistency](https://arxiv.org/abs/2305.11860), and [Early-Stopping Self-Consistency](https://arxiv.org/abs/2401.10480). It does not claim to invent adaptive sampling. The experiment uses the [GSM8K dataset](https://github.com/openai/grade-school-math) and [Qwen2.5 model](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct), rather than a new language model. Code is under the [MIT license](LICENSE).
+I build on [self-consistency](https://arxiv.org/abs/2203.11171), [Adaptive-Consistency](https://arxiv.org/abs/2305.11860), and [Early-Stopping Self-Consistency](https://arxiv.org/abs/2401.10480), using [GSM8K](https://github.com/openai/grade-school-math), [MATH-500](https://huggingface.co/datasets/HuggingFaceH4/MATH-500), and [Qwen2.5](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct). Code is [MIT licensed](LICENSE). [Earlier usage and the code map](docs/core-and-extras.md) remain available.
+
+Written with AI coding assistance.

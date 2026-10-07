@@ -47,9 +47,11 @@ jobs:
           --validation-size 32
           --test-size 32
           --epochs 8
-      - name: Import pinned Modal application
+      - name: Import pinned Modal applications
         if: matrix.python == '3.14'
-        run: uv run --extra dev --extra math --extra modal python -c "import modal_app"
+        run: >-
+          uv run --extra dev --extra math --extra modal python -c
+          "import modal_app; import runpy; runpy.run_path('tools/collect_math500.py')"
 
   package:
     name: Torch-free wheel

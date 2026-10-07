@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="530" viewBox="0 0 1080 530" role="img" aria-labelledby="title desc">
+<title id="title">Stopping on GSM8K and MATH-500</title>
+<desc id="desc">Accuracy versus average samples. GSM8K full official test, 1319 prompts; MATH-500 internal held-out test, 200 prompts. Error bars are marginal 95% prompt bootstrap intervals. These are different tasks.</desc>
+<rect width="1080" height="530" fill="white"/>
+<g font-family="sans-serif" fill="#17212e">
+<text x="35" y="32" font-size="23">Stopping accuracy versus sample count</text>
+<circle cx="40" cy="57" r="4" fill="#334155"/>
+<text x="52" y="62" font-size="14">Fixed counts</text>
+<circle cx="270" cy="57" r="4" fill="#b46b00"/>
+<text x="282" y="62" font-size="14">Agreement-2</text>
+<circle cx="500" cy="57" r="4" fill="#95358d"/>
+<text x="512" y="62" font-size="14">Task-trained policy</text>
+<circle cx="730" cy="57" r="4" fill="#087e8b"/>
+<text x="742" y="62" font-size="14">GSM8K transfer</text>
+<text x="50" y="104" font-size="17">GSM8K · full official test · N=1,319</text>
+<text x="50" y="125" font-size="12">Earlier success rule: not met</text>
+<path d="M 70 410.00 H 505" stroke="#e5e7eb"/>
+<text x="25" y="414.0" font-size="12">64%</text>
+<path d="M 70 343.75 H 505" stroke="#e5e7eb"/>
+<text x="25" y="347.75" font-size="12">69%</text>
+<path d="M 70 277.50 H 505" stroke="#e5e7eb"/>
+<text x="25" y="281.5" font-size="12">74%</text>
+<path d="M 70 211.25 H 505" stroke="#e5e7eb"/>
+<text x="25" y="215.25" font-size="12">79%</text>
+<path d="M 70 145.00 H 505" stroke="#e5e7eb"/>
+<text x="25" y="149.0" font-size="12">85%</text>
+<text x="66.0" y="430" font-size="12">1</text>
+<text x="128.14" y="430" font-size="12">2</text>
+<text x="190.29" y="430" font-size="12">3</text>
+<text x="252.43" y="430" font-size="12">4</text>
+<text x="314.57" y="430" font-size="12">5</text>
+<text x="376.71" y="430" font-size="12">6</text>
+<text x="438.86" y="430" font-size="12">7</text>
+<text x="501.0" y="430" font-size="12">8</text>
+<polyline points="70.00,345.91 132.14,305.73 194.29,273.19 256.43,256.93 318.57,231.09 380.71,220.57 442.86,215.78 505.00,203.34" fill="none" stroke="#334155"/>
+<path d="M 218.45 281.81 V 222.46 M 211.34 251.19 H 225.76" stroke="#95358d" opacity="0.5"/>
+<circle cx="218.45" cy="251.19" r="4" fill="#95358d"><title>BranchPilot λ=0.01: accuracy 0.762699, mean samples 3.388931</title></circle>
+<path d="M 70.00 378.45 V 314.34 M 70.00 345.91 H 70.00" stroke="#334155" opacity="0.5"/>
+<circle cx="70.00" cy="345.91" r="4" fill="#334155"><title>fixed-1: accuracy 0.687642, mean samples 1.000000</title></circle>
+<path d="M 132.14 337.30 V 274.15 M 132.14 305.73 H 132.14" stroke="#334155" opacity="0.5"/>
+<circle cx="132.14" cy="305.73" r="4" fill="#334155"><title>fixed-2: accuracy 0.719484, mean samples 2.000000</title></circle>
+<path d="M 194.29 303.81 V 243.53 M 194.29 273.19 H 194.29" stroke="#334155" opacity="0.5"/>
+<circle cx="194.29" cy="273.19" r="4" fill="#334155"><title>fixed-3: accuracy 0.745262, mean samples 3.000000</title></circle>
+<path d="M 256.43 286.59 V 227.27 M 256.43 256.93 H 256.43" stroke="#334155" opacity="0.5"/>
+<circle cx="256.43" cy="256.93" r="4" fill="#334155"><title>fixed-4: accuracy 0.758150, mean samples 4.000000</title></circle>
+<path d="M 318.57 259.80 V 202.39 M 318.57 231.09 H 318.57" stroke="#334155" opacity="0.5"/>
+<circle cx="318.57" cy="231.09" r="4" fill="#334155"><title>fixed-5: accuracy 0.778620, mean samples 5.000000</title></circle>
+<path d="M 380.71 248.32 V 192.82 M 380.71 220.57 H 380.71" stroke="#334155" opacity="0.5"/>
+<circle cx="380.71" cy="220.57" r="4" fill="#334155"><title>fixed-6: accuracy 0.786960, mean samples 6.000000</title></circle>
+<path d="M 442.86 243.53 V 188.03 M 442.86 215.78 H 442.86" stroke="#334155" opacity="0.5"/>
+<circle cx="442.86" cy="215.78" r="4" fill="#334155"><title>fixed-7: accuracy 0.790751, mean samples 7.000000</title></circle>
+<path d="M 505.00 230.14 V 176.55 M 505.00 203.34 H 505.00" stroke="#334155" opacity="0.5"/>
+<circle cx="505.00" cy="203.34" r="4" fill="#334155"><title>fixed-8: accuracy 0.800607, mean samples 8.000000</title></circle>
+<path d="M 208.42 247.36 V 190.90 M 201.64 218.65 H 215.49" stroke="#b46b00" opacity="0.5"/>
+<circle cx="208.42" cy="218.65" r="4" fill="#b46b00"><title>agreement-2: accuracy 0.788476, mean samples 3.227445</title></circle>
+<path d="M 193.06 281.81 V 223.44 M 186.28 252.14 H 200.08" stroke="#95358d" opacity="0.5"/>
+<circle cx="193.06" cy="252.14" r="4" fill="#95358d"><title>BranchPilot λ=0.025: accuracy 0.761941, mean samples 2.980288</title></circle>
+<path d="M 162.67 295.23 V 235.88 M 156.50 265.54 H 169.13" stroke="#95358d" opacity="0.5"/>
+<circle cx="162.67" cy="265.54" r="4" fill="#95358d"><title>BranchPilot λ=0.05: accuracy 0.751327, mean samples 2.491281</title></circle>
+<path d="M 139.26 305.73 V 245.45 M 133.56 275.11 H 145.29" stroke="#95358d" opacity="0.5"/>
+<circle cx="139.26" cy="275.11" r="4" fill="#95358d"><title>BranchPilot λ=0.075: accuracy 0.743745, mean samples 2.114481</title></circle>
+<path d="M 123.38 312.43 V 252.14 M 118.20 281.81 H 128.85" stroke="#95358d" opacity="0.5"/>
+<circle cx="123.38" cy="281.81" r="4" fill="#95358d"><title>BranchPilot λ=0.1: accuracy 0.738438, mean samples 1.858984</title></circle>
+<path d="M 102.60 330.61 V 268.41 M 98.65 299.03 H 106.98" stroke="#95358d" opacity="0.5"/>
+<circle cx="102.60" cy="299.03" r="4" fill="#95358d"><title>BranchPilot λ=0.15: accuracy 0.724792, mean samples 1.524640</title></circle>
+<text x="160" y="456" font-size="14">Average samples per prompt</text>
+<text x="580" y="104" font-size="17">MATH-500 · internal held-out · N=200</text>
+<text x="580" y="125" font-size="12">Fixed primary success rule: not met</text>
+<path d="M 600 410.00 H 1035" stroke="#e5e7eb"/>
+<text x="555" y="414.0" font-size="12">43%</text>
+<path d="M 600 343.75 H 1035" stroke="#e5e7eb"/>
+<text x="555" y="347.75" font-size="12">50%</text>
+<path d="M 600 277.50 H 1035" stroke="#e5e7eb"/>
+<text x="555" y="281.5" font-size="12">57%</text>
+<path d="M 600 211.25 H 1035" stroke="#e5e7eb"/>
+<text x="555" y="215.25" font-size="12">65%</text>
+<path d="M 600 145.00 H 1035" stroke="#e5e7eb"/>
+<text x="555" y="149.0" font-size="12">72%</text>
+<text x="596.0" y="430" font-size="12">1</text>
+<text x="658.14" y="430" font-size="12">2</text>
+<text x="720.29" y="430" font-size="12">3</text>
+<text x="782.43" y="430" font-size="12">4</text>
+<text x="844.57" y="430" font-size="12">5</text>
+<text x="906.71" y="430" font-size="12">6</text>
+<text x="968.86" y="430" font-size="12">7</text>
+<text x="1031.0" y="430" font-size="12">8</text>
+<polyline points="600.00,300.34 662.14,323.19 724.29,282.07 786.43,227.24 848.57,240.95 910.71,240.95 972.86,245.52 1035.00,231.81" fill="none" stroke="#334155"/>
+<path d="M 800.72 332.33 V 208.97 M 778.04 268.36 H 823.40" stroke="#95358d" opacity="0.5"/>
+<circle cx="800.72" cy="268.36" r="4" fill="#95358d"><title>BranchPilot λ=0.01: accuracy 0.585000, mean samples 4.230000</title></circle>
+<path d="M 600.00 364.31 V 236.38 M 600.00 300.34 H 600.00" stroke="#334155" opacity="0.5"/>
+<circle cx="600.00" cy="300.34" r="4" fill="#334155"><title>fixed-1: accuracy 0.550000, mean samples 1.000000</title></circle>
+<path d="M 662.14 387.16 V 259.22 M 662.14 323.19 H 662.14" stroke="#334155" opacity="0.5"/>
+<circle cx="662.14" cy="323.19" r="4" fill="#334155"><title>fixed-2: accuracy 0.525000, mean samples 2.000000</title></circle>
+<path d="M 724.29 346.03 V 218.10 M 724.29 282.07 H 724.29" stroke="#334155" opacity="0.5"/>
+<circle cx="724.29" cy="282.07" r="4" fill="#334155"><title>fixed-3: accuracy 0.570000, mean samples 3.000000</title></circle>
+<path d="M 786.43 286.64 V 167.84 M 786.43 227.24 H 786.43" stroke="#334155" opacity="0.5"/>
+<circle cx="786.43" cy="227.24" r="4" fill="#334155"><title>fixed-4: accuracy 0.630000, mean samples 4.000000</title></circle>
+<path d="M 848.57 304.91 V 176.98 M 848.57 240.95 H 848.57" stroke="#334155" opacity="0.5"/>
+<circle cx="848.57" cy="240.95" r="4" fill="#334155"><title>fixed-5: accuracy 0.615000, mean samples 5.000000</title></circle>
+<path d="M 910.71 304.91 V 181.55 M 910.71 240.95 H 910.71" stroke="#334155" opacity="0.5"/>
+<circle cx="910.71" cy="240.95" r="4" fill="#334155"><title>fixed-6: accuracy 0.615000, mean samples 6.000000</title></circle>
+<path d="M 972.86 309.48 V 186.12 M 972.86 245.52 H 972.86" stroke="#334155" opacity="0.5"/>
+<circle cx="972.86" cy="245.52" r="4" fill="#334155"><title>fixed-7: accuracy 0.610000, mean samples 7.000000</title></circle>
+<path d="M 1035.00 295.78 V 172.41 M 1035.00 231.81 H 1035.00" stroke="#334155" opacity="0.5"/>
+<circle cx="1035.00" cy="231.81" r="4" fill="#334155"><title>fixed-8: accuracy 0.625000, mean samples 8.000000</title></circle>
+<path d="M 806.62 295.78 V 172.41 M 783.63 231.81 H 829.31" stroke="#b46b00" opacity="0.5"/>
+<circle cx="806.62" cy="231.81" r="4" fill="#b46b00"><title>agreement-2: accuracy 0.625000, mean samples 4.325000</title></circle>
+<path d="M 766.85 332.33 V 204.40 M 745.10 268.36 H 789.23" stroke="#95358d" opacity="0.5"/>
+<circle cx="766.85" cy="268.36" r="4" fill="#95358d"><title>BranchPilot λ=0.025: accuracy 0.585000, mean samples 3.685000</title></circle>
+<path d="M 746.04 332.33 V 204.40 M 724.29 268.36 H 768.10" stroke="#95358d" opacity="0.5"/>
+<circle cx="746.04" cy="268.36" r="4" fill="#95358d"><title>BranchPilot λ=0.05: accuracy 0.585000, mean samples 3.350000</title></circle>
+<path d="M 707.51 341.47 V 218.10 M 688.24 277.50 H 727.70" stroke="#95358d" opacity="0.5"/>
+<circle cx="707.51" cy="277.50" r="4" fill="#95358d"><title>BranchPilot λ=0.075: accuracy 0.575000, mean samples 2.730000</title></circle>
+<path d="M 674.88 341.47 V 218.10 M 658.41 277.50 H 692.28" stroke="#95358d" opacity="0.5"/>
+<circle cx="674.88" cy="277.50" r="4" fill="#95358d"><title>BranchPilot λ=0.1: accuracy 0.575000, mean samples 2.205000</title></circle>
+<path d="M 641.95 346.03 V 218.10 M 629.83 282.07 H 655.62" stroke="#95358d" opacity="0.5"/>
+<circle cx="641.95" cy="282.07" r="4" fill="#95358d"><title>BranchPilot λ=0.15: accuracy 0.570000, mean samples 1.675000</title></circle>
+<path d="M 855.10 332.33 V 204.40 M 829.93 268.36 H 880.26" stroke="#087e8b" opacity="0.5"/>
+<circle cx="855.10" cy="268.36" r="4" fill="#087e8b"><title>BranchPilot λ=0.01: accuracy 0.585000, mean samples 5.105000</title></circle>
+<path d="M 839.56 336.90 V 208.97 M 814.08 272.93 H 865.04" stroke="#087e8b" opacity="0.5"/>
+<circle cx="839.56" cy="272.93" r="4" fill="#087e8b"><title>BranchPilot λ=0.025: accuracy 0.580000, mean samples 4.855000</title></circle>
+<path d="M 824.34 336.90 V 208.97 M 798.55 272.93 H 850.44" stroke="#087e8b" opacity="0.5"/>
+<circle cx="824.34" cy="272.93" r="4" fill="#087e8b"><title>BranchPilot λ=0.05: accuracy 0.580000, mean samples 4.610000</title></circle>
+<path d="M 811.91 336.90 V 208.97 M 786.12 272.93 H 837.70" stroke="#087e8b" opacity="0.5"/>
+<circle cx="811.91" cy="272.93" r="4" fill="#087e8b"><title>BranchPilot λ=0.075: accuracy 0.580000, mean samples 4.410000</title></circle>
+<path d="M 792.95 346.03 V 218.10 M 767.16 282.07 H 819.36" stroke="#087e8b" opacity="0.5"/>
+<circle cx="792.95" cy="282.07" r="4" fill="#087e8b"><title>BranchPilot λ=0.1: accuracy 0.570000, mean samples 4.105000</title></circle>
+<path d="M 767.16 350.60 V 222.67 M 742.00 286.64 H 794.20" stroke="#087e8b" opacity="0.5"/>
+<circle cx="767.16" cy="286.64" r="4" fill="#087e8b"><title>BranchPilot λ=0.15: accuracy 0.565000, mean samples 3.690000</title></circle>
+<text x="690" y="456" font-size="14">Average samples per prompt</text>
+<text x="35" y="490" font-size="13">95% prompt-bootstrap intervals · 10,000 resamples · seed 17. Separate accuracy scales.</text>
+<text x="35" y="513" font-size="13">Response-bank replay; sample counts are not token, latency, or dollar budgets.</text>
+</g>
+</svg>

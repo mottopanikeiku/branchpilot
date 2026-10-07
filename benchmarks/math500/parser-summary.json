@@ -6,6 +6,11 @@
     "math-verify": "0.8.0",
     "sympy": "1.14.0"
   },
+  "parsed_bank_bytes": {
+    "test": 451744,
+    "train": 455320,
+    "validation": 238818
+  },
   "parsed_bank_sha256": {
     "test": "393326c912ad671520a522b47f453d57441b7f9d5fcca5dc12c3f1c3611150e1",
     "train": "aa6e129a08674d236ade7d89904a8f716a2194ed2466769bdf53653181cc716d",
