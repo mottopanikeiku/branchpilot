@@ -23,7 +23,7 @@ app = modal.App("branchpilot-math500")
 image = modal.Image.from_registry(IMAGE).run_commands(
     "ln -sf /usr/bin/python3 /usr/bin/python"
 ).entrypoint([])
-TIMEOUT = int(os.environ.get("BRANCHPILOT_CLOUD_TIMEOUT", "1800"))
+TIMEOUT = int(os.environ.get("BRANCHPILOT_CLOUD_TIMEOUT", "300"))
 
 
 def encode(records: list[dict]) -> bytes:
