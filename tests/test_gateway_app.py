@@ -448,6 +448,32 @@ def test_horizon_override_is_bounded_and_cost_is_never_client_controlled() -> No
     assert untouched.calls == []
 
 
+class _NeverStopStrategy:
+    max_samples = 2
+
+    def decide_observed(self, question, samples, cost, *, prompt_tokens=0, max_samples=None):
+        decision = FixedStrategy(2, 2).decide_observed(
+            question, samples, cost, prompt_tokens=prompt_tokens, max_samples=max_samples
+        )
+        return type(decision)(
+            action="continue",
+            q_stop=decision.q_stop,
+            q_continue=decision.q_continue,
+            sample_count=decision.sample_count,
+            majority_answer=decision.majority_answer,
+        )
+
+
+def test_strategy_that_ignores_the_horizon_fails_without_an_extra_upstream_call() -> None:
+    upstream = FakeUpstream([_sample("one", "1"), _sample("two", "2"), _sample("three", "3")])
+    app = create_app(_config(_NeverStopStrategy()), upstreams={"local": upstream})
+    with TestClient(app) as client:
+        response = client.post("/v1/chat/completions", headers=_headers(), json=_body())
+    assert response.status_code == 500
+    assert response.json()["error"]["message"] == "The gateway encountered an internal error."
+    assert len(upstream.calls) == 2
+
+
 def test_route_completion_cap_is_sent_when_omitted_and_cap_plus_one_is_rejected() -> None:
     allowed = FakeUpstream([_sample("answer", "42")])
     config = _config(FixedStrategy(1, 1))
