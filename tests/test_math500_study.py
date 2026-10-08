@@ -379,6 +379,12 @@ def test_cli_prohibits_epochs_override():
     assert error.value.code == 2
 
 
+def test_missing_recorded_commit_explains_how_to_fetch_history(tmp_path):
+    study.git(tmp_path, "init", "--quiet")
+    with pytest.raises(ValueError, match="fetch full history"):
+        study.resolve_commit(tmp_path, "29eea90")
+
+
 def test_compact_outcomes_deduplicates_shared_baselines(protocol):
     result = study.evaluate_bank(
         [rollout(0, "test"), rollout(1, "test")], StoppingPolicy(), protocol

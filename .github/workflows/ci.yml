@@ -53,6 +53,27 @@ jobs:
           uv run --extra dev --extra math --extra modal python -c
           "import modal_app; import runpy; runpy.run_path('tools/collect_math500.py')"
 
+  replay:
+    name: Replay committed results
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The MATH replay reads the protocol and selection from their recorded commits.
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          python-version: "3.14"
+      - name: Install locked core environment
+        run: uv sync --locked
+      - name: Recompute GSM8K summary and figure
+        run: uv run python tools/plot_sampling_tradeoff.py
+      - name: Replay MATH held-out evaluation and figure
+        run: uv run python tools/evaluate_math500.py test --selection-commit 29eea90
+      - name: Require byte-identical outputs
+        run: git diff --exit-code
+
   package:
     name: Torch-free wheel
     runs-on: ubuntu-latest

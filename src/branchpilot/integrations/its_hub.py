@@ -168,9 +168,7 @@ class BranchPilotAlgorithm(AbstractScalingAlgorithm):
                 )
 
             responses.append(response)
-            decision = session.observe(sample)
-            if decision.action != "stop" and len(responses) >= horizon:
-                raise RuntimeError("strategy failed to stop at the inference horizon")
+            session.observe(sample)
 
         pilot_result = session.result()
         response_counts = Counter(

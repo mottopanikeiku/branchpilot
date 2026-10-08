@@ -50,11 +50,12 @@ I committed [all **4,000 new responses**](benchmarks/math500/generation-manifest
 
 ```bash
 uv sync --frozen
+uv run python tools/plot_sampling_tradeoff.py
 uv run python tools/evaluate_math500.py plot
 uv run python tools/evaluate_math500.py test --selection-commit 29eea90
 ```
 
-These commands redraw and replay the stored study on CPU without model downloads or paid compute. Retraining requires the `train` extra: run `select`, commit its artifacts, then run `test` with that commit. Redrawing responses requires Modal and one L4; the generation script refuses to overwrite an existing bank.
+These commands recompute the GSM8K summary and replay the MATH study on CPU without model downloads or paid compute; on an unchanged checkout, `git diff` stays empty, and CI checks this. The `test` command reads the protocol and selection from their recorded commits, so it needs full git history rather than a shallow clone. Retraining requires the `train` extra: run `select`, commit its artifacts, then run `test` with that commit. Redrawing responses requires Modal and one L4; the generation script refuses to overwrite an existing bank.
 
 ## Limitations
 

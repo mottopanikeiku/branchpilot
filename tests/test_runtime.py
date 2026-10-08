@@ -189,3 +189,42 @@ def test_invalid_token_and_horizon_bounds_are_rejected(
 ) -> None:
     with pytest.raises(error, match=message):
         PilotSession(FakePolicy(max_samples=5), "question", 0.0, **kwargs)  # type: ignore[arg-type]
+
+
+class NeverStopPolicy(FakePolicy):
+    def decide_observed(self, question, samples, cost, *, prompt_tokens=0, max_samples=None):
+        decision = super().decide_observed(
+            question, samples, cost, prompt_tokens=prompt_tokens, max_samples=max_samples
+        )
+        return Decision(
+            action="continue",
+            q_stop=decision.q_stop,
+            q_continue=decision.q_continue,
+            sample_count=decision.sample_count,
+            majority_answer=decision.majority_answer,
+        )
+
+
+def test_policy_that_ignores_the_horizon_never_triggers_an_extra_sample() -> None:
+    sampled: list[int] = []
+    session = PilotSession(NeverStopPolicy(max_samples=5), "question", 0.0, max_samples=3)
+
+    with pytest.raises(RuntimeError, match="failed to stop at the session horizon"):
+        session.run(lambda index: sampled.append(index) or make_sample(index))
+
+    assert sampled == [1, 2, 3]
+    assert not session.stopped
+
+
+def test_async_run_also_refuses_to_sample_past_the_horizon() -> None:
+    sampled: list[int] = []
+
+    async def sampler(index: int) -> Sample:
+        sampled.append(index)
+        return make_sample(index)
+
+    session = PilotSession(NeverStopPolicy(max_samples=2), "question", 0.0)
+    with pytest.raises(RuntimeError, match="failed to stop at the session horizon"):
+        asyncio.run(session.run_async(sampler))
+
+    assert sampled == [1, 2]

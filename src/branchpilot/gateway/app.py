@@ -297,10 +297,6 @@ async def _adaptive_request(
             max_samples=horizon,
         )
         session.observe(first.sample)
-        if session.should_continue and len(samples) >= horizon:
-            raise GatewayError(
-                500, "api_error", "internal_error", "The gateway encountered an internal error."
-            )
         while session.should_continue:
             observed = await upstream.sample(
                 body,
@@ -310,13 +306,6 @@ async def _adaptive_request(
             )
             samples.append(observed)
             session.observe(observed.sample)
-            if session.should_continue and len(samples) >= horizon:
-                raise GatewayError(
-                    500,
-                    "api_error",
-                    "internal_error",
-                    "The gateway encountered an internal error.",
-                )
         answer = session.result().answer
         if answer is None:
             selection = "unparsed-fallback"

@@ -106,6 +106,9 @@ class PilotSession:
             max_samples=self.max_samples,
         )
         self._decisions.append(decision)
+        if decision.action != "stop" and len(self._samples) >= self.max_samples:
+            # Fail here so run() and run_async() never request a sample past the horizon.
+            raise RuntimeError("policy failed to stop at the session horizon")
         return decision
 
     def run(self, sampler: Callable[[int], Sample]) -> PilotResult:
