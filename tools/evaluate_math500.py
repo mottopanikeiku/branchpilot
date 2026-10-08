@@ -54,7 +54,13 @@ def git(root: Path, *args: str) -> bytes:
 
 
 def resolve_commit(root: Path, commit: str) -> str:
-    return git(root, "rev-parse", "--verify", f"{commit}^{{commit}}").decode().strip()
+    try:
+        return git(root, "rev-parse", "--verify", f"{commit}^{{commit}}").decode().strip()
+    except subprocess.CalledProcessError as exc:
+        raise ValueError(
+            f"commit {commit} is not in this checkout; fetch full history "
+            "(git fetch --unshallow) before replaying recorded commits"
+        ) from exc
 
 
 def protocol_at_commit(root: Path, commit: str) -> str:
