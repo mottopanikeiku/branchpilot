@@ -20,7 +20,7 @@ The basic sequence is:
 
 1. Request the first sample through a caller-supplied callback.
 2. Pass a `Sample` to `PilotSession.observe`. The strategy receives the question, observed samples, prompt-token count, sample-cost parameter, and horizon—not a gold answer or future sample.
-3. Continue by requesting one more sample, or stop and return the prefix's selected answer. Built-in strategies and the learned policy force STOP at the horizon. `run` and `run_async` do not call the sampler after STOP.
+3. Continue by requesting one more sample, or stop and return the prefix's selected answer. Built-in strategies and the learned policy force STOP at the horizon; if a custom strategy returns CONTINUE there, `observe` raises `RuntimeError`. `run` and `run_async` never call the sampler after STOP or past the horizon.
 
 The selected answer comes from prefix voting, with ties resolved by available mean log probability and then first occurrence. Unparsed answers count as separate observations rather than a shared agreement. Feature inputs include vote share, margin, entropy, diversity, parse/log-probability coverage, completion lengths, and prompt structure. The learned policy also uses the remaining horizon and cost. Its continuation advantage is projected to be nonincreasing across the trained cost grid before interpolation.
 
