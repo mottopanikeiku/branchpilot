@@ -79,6 +79,11 @@ version and is listed under **Changed** or **Removed** with the exact migration 
 - Response-shape golden suite pinning the client-visible payload across every provider and lever
   path, with all BranchPilot additions confined to a single `branchpilot` extension key.
 
+### Fixed
+
+- `PilotSession` now raises as soon as a strategy returns CONTINUE at the session
+  horizon. Previously `run` and `run_async` requested one more sample before failing.
+
 ## [0.3.0] — 2026-08-27
 
 ### Added
