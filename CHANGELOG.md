@@ -47,6 +47,9 @@ version and is listed under **Changed** or **Removed** with the exact migration 
   simple rules at matched expected sample budgets.
 - Source distributions now exclude all `.venv*` directories, including the
   workflow's temporary Torch-free environment.
+- CI replays the committed GSM8K summary and the MATH held-out evaluation and fails
+  unless the outputs are byte-identical; a test checks the README result tables
+  against the committed result files.
 
 - CPU-only accuracy/sample trade-off figure from committed GSM8K prompt outcomes,
   with all fixed counts, confidence thresholds, agreement streaks, and learned costs.
